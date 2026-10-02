@@ -3,18 +3,17 @@ import { Alert, Pressable, Text, View } from 'react-native';
 import { carryFor, rateOf } from '../calc';
 import { creditMessage } from '../creditMessage';
 import { useLookups } from '../hooks';
-import { sendSms } from '../sms';
 import { useStore } from '../store';
 import type { NozzleReading, UnitSettlement } from '../types';
 import { Btn, C, Card, Divider, Empty, HStack, ListItem, Muted, NumInput, Row, Select, diffColor, diffText } from '../ui';
 import { num, round2 } from '../utils';
 import { BankTxnForm } from './BankTxnForm';
-import { CreditForm } from './CreditForm';
+import { CreditForm, resendSms } from './CreditForm';
 import type { SectionProps } from './DayEntry';
 
 /** Everything about one dispenser for the day on one page: nozzles, sale, receipts, credit, deposit. */
 export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId: string }) {
-  const { data, ledger, update } = useStore();
+  const { data, ledger, update, updateDay } = useStore();
   const L = useLookups();
   const [showCredit, setShowCredit] = useState(false);
   const [showDeposit, setShowDeposit] = useState(false);
@@ -192,11 +191,22 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
             <ListItem
               key={c.id}
               title={`${cust?.name ?? '—'} · ${L.cur} ${num(c.amount)}`}
-              sub={[c.nozzleId && L.nozzle.get(c.nozzleId)?.name, c.productId && `${L.productName(c.productId)} ${num(c.qty)} L`, c.vehicleNo, c.slipNo && `Slip ${c.slipNo}`]
+              sub={[
+                c.nozzleId && L.nozzle.get(c.nozzleId)?.name,
+                c.productId && `${L.productName(c.productId)} ${num(c.qty)} L`,
+                c.vehicleNo,
+                c.slipNo && `Slip ${c.slipNo}`,
+                c.sms === 'sent' ? '✓ SMS sent' : c.sms === 'failed' ? '✗ SMS failed' : c.sms === 'opened' ? 'SMS opened' : '',
+              ]
                 .filter(Boolean)
                 .join(' · ')}
               right="💬"
-              onPress={() => cust && sendSms(cust.phone, creditMessage(data, c.customerId, day.date, c)).catch((e) => Alert.alert('Error', String(e)))}
+              onPress={() =>
+                cust &&
+                resendSms(data, cust.phone, cust.name, creditMessage(data, c.customerId, day.date, c), (status) =>
+                  updateDay(day.date, (d) => ({ ...d, creditSales: d.creditSales.map((x) => (x.id === c.id ? { ...x, sms: status } : x)) })),
+                )
+              }
               onDelete={() => set((d) => ({ ...d, creditSales: d.creditSales.filter((x) => x.id !== c.id) }))}
             />
           );

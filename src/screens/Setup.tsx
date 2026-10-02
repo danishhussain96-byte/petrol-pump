@@ -4,6 +4,7 @@ import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react';
 import { Alert, Switch, Text, View } from 'react-native';
 import { DENOMINATIONS } from '../calc';
+import { smsModeOf, type SmsMode } from './CreditForm';
 import { useLookups } from '../hooks';
 import { useStore } from '../store';
 import { makeUnit } from '../defaults';
@@ -456,10 +457,19 @@ function SettingsView() {
         <Select label="Digital / online sales go to" value={st.digitalBankId} options={L.opt.banks} allowNone="— Don't post to bank —" onChange={(v) => set({ digitalBankId: v })} />
       </Card>
       <Card title="Credit SMS">
-        <HStack style={{ alignItems: 'center' }}>
-          <Switch value={st.smsAfterCredit !== false} onValueChange={(v) => set({ smsAfterCredit: v })} />
-          <Text style={{ color: C.text, flex: 1 }}>After each credit sale, offer to SMS / WhatsApp the customer their balance and credit days</Text>
-        </HStack>
+        <Select
+          label="After each credit sale"
+          value={smsModeOf(st)}
+          options={[
+            { value: 'auto', label: 'Send SMS automatically', sub: 'Android: sent from this phone\'s SIM, no tap needed' },
+            { value: 'ask', label: 'Ask each time', sub: 'Opens SMS / WhatsApp with the message ready' },
+            { value: 'off', label: 'Don\'t send', sub: '' },
+          ]}
+          onChange={(v) => set({ smsMode: (v as SmsMode) || 'auto' })}
+        />
+        <Muted style={{ marginTop: 6 }}>
+          Automatic SMS uses this phone's SIM and normal SMS charges. Android asks once for permission to send SMS. iPhone does not allow apps to send SMS by themselves, so on iPhone the SMS app opens with the message ready.
+        </Muted>
       </Card>
       <Card title="Cash count notes">
         <DenominationsField value={st.denominations?.length ? st.denominations : DENOMINATIONS} onChange={(list) => set({ denominations: list })} />

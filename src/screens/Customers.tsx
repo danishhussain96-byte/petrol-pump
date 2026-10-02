@@ -3,7 +3,8 @@ import { Alert, Text, View } from 'react-native';
 import { creditStatus, customerLedger, type CreditStatus } from '../calc';
 import { creditMessage } from '../creditMessage';
 import { useLookups } from '../hooks';
-import { sendSms, sendWhatsApp } from '../sms';
+import { sendWhatsApp } from '../sms';
+import { resendSms } from './CreditForm';
 import { useStore } from '../store';
 import type { Cheque, Customer } from '../types';
 import { Btn, C, Card, Chip, Divider, Empty, Field, HStack, ListItem, Muted, NumInput, Row, Screen, Stat, confirm } from '../ui';
@@ -160,7 +161,7 @@ function CustomerDetail({ id, onBack }: { id: string; onBack: () => void }) {
         )}
       </Card>
       <HStack style={{ marginBottom: 12 }}>
-        <Btn title="💬 SMS balance" style={{ flex: 1 }} onPress={() => sendSms(c.phone, msg).catch((e) => Alert.alert('Error', String(e)))} />
+        <Btn title="💬 SMS balance" style={{ flex: 1 }} onPress={() => resendSms(data, c.phone, c.name, msg)} />
         <Btn title="WhatsApp" kind="secondary" onPress={() => sendWhatsApp(c.phone, msg).catch((e) => Alert.alert('Error', String(e)))} />
       </HStack>
       <Card title="Receive payment" right={<Btn title={mode === 'pay' ? 'Close' : '+ Payment / cheque'} small onPress={() => setMode(mode === 'pay' ? 'none' : 'pay')} />}>

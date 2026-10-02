@@ -3,26 +3,85 @@ import { Alert, Text, View } from 'react-native';
 import { creditStatus, rateOf } from '../calc';
 import { creditMessage } from '../creditMessage';
 import { useLookups } from '../hooks';
-import { sendSms, sendWhatsApp } from '../sms';
+import { canSendDirect, sendSms, sendSmsDirect, sendWhatsApp } from '../sms';
 import { useStore } from '../store';
 import type { AppData, CreditSale, Customer, DayRecord } from '../types';
 import { Btn, C, Field, HStack, Muted, NumInput, Select } from '../ui';
-import { num, round2, todayStr, uid } from '../utils';
+import { num, round2, uid } from '../utils';
 
-/** Asks whether to text the customer, with the message built from the data as it will be after saving. */
-export function offerCreditSms(data: AppData, customerId: string, date: string, sale?: CreditSale) {
+export type SmsMode = 'auto' | 'ask' | 'off';
+
+export function smsModeOf(settings: AppData['settings']): SmsMode {
+  return settings.smsMode ?? (settings.smsAfterCredit === false ? 'off' : 'auto');
+}
+
+/**
+ * After a credit sale: in "auto" mode (Android) the SMS goes out by itself; otherwise asks
+ * whether to open SMS / WhatsApp. `mark` records the outcome on the credit entry.
+ */
+export async function notifyCredit(
+  data: AppData,
+  customerId: string,
+  date: string,
+  sale: CreditSale | undefined,
+  mark?: (status: 'sent' | 'opened' | 'failed') => void,
+) {
+  const mode = smsModeOf(data.settings);
+  if (mode === 'off') return;
   const c = data.customers.find((x) => x.id === customerId);
   if (!c) return;
   const msg = creditMessage(data, customerId, date, sale);
   if (!c.phone) {
-    Alert.alert('Saved', `${c.name} has no mobile number, so no SMS. Add it in Setup → Customers.`);
+    Alert.alert('No SMS sent', `${c.name} has no mobile number. Add it in the Credit tab.`);
+    return;
+  }
+  if (mode === 'auto' && canSendDirect()) {
+    const r = await sendSmsDirect(c.phone, msg);
+    if (r.result === 'sent' || r.result === 'unknown') {
+      mark?.('sent');
+      return;
+    }
+    mark?.('failed');
+    const why =
+      r.result === 'no-permission'
+        ? 'SMS permission was not allowed. If Android does not show the Allow button, open Settings → Apps → Petrol Pump Manager → ⋮ → Allow restricted settings, then Permissions → SMS → Allow.'
+        : `The phone could not send it${r.error ? ` (${r.error})` : ''}. Check the SIM has balance / signal.`;
+    Alert.alert(`SMS to ${c.name} not sent`, why, [
+      { text: 'OK', style: 'cancel' },
+      { text: 'Open SMS app', onPress: () => sendSms(c.phone, msg).then(() => mark?.('opened')).catch((e) => Alert.alert('Error', String(e))) },
+    ]);
     return;
   }
   Alert.alert(`Send to ${c.name}?`, msg, [
     { text: 'Skip', style: 'cancel' },
-    { text: 'WhatsApp', onPress: () => sendWhatsApp(c.phone, msg).catch((e) => Alert.alert('Error', String(e))) },
-    { text: 'SMS', onPress: () => sendSms(c.phone, msg).catch((e) => Alert.alert('Error', String(e))) },
+    { text: 'WhatsApp', onPress: () => sendWhatsApp(c.phone, msg).then(() => mark?.('opened')).catch((e) => Alert.alert('Error', String(e))) },
+    { text: 'SMS', onPress: () => sendSms(c.phone, msg).then(() => mark?.('opened')).catch((e) => Alert.alert('Error', String(e))) },
   ]);
+}
+
+/** For the 💬 buttons: send directly after a confirm on Android, or open the SMS app. */
+export function resendSms(data: AppData, phone: string, name: string, msg: string, mark?: (status: 'sent' | 'opened' | 'failed') => void) {
+  if (smsModeOf(data.settings) !== 'off' && canSendDirect()) {
+    Alert.alert(`Send SMS to ${name}?`, msg, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Open SMS app', onPress: () => sendSms(phone, msg).then(() => mark?.('opened')).catch((e) => Alert.alert('Error', String(e))) },
+      {
+        text: 'Send now',
+        onPress: async () => {
+          const r = await sendSmsDirect(phone, msg);
+          if (r.result === 'sent' || r.result === 'unknown') {
+            mark?.('sent');
+            Alert.alert('SMS sent', `Sent to ${name}.`);
+          } else {
+            mark?.('failed');
+            Alert.alert('SMS not sent', r.result === 'no-permission' ? 'SMS permission was not allowed.' : r.error ?? r.result);
+          }
+        },
+      },
+    ]);
+    return;
+  }
+  sendSms(phone, msg).then(() => mark?.('opened')).catch((e) => Alert.alert('Error', String(e)));
 }
 
 export function firstVehicle(c?: Customer): string {
@@ -44,7 +103,7 @@ export function CreditForm({
   unitId?: string;
   onDone?: () => void;
 }) {
-  const { data, update } = useStore();
+  const { data, update, updateDay } = useStore();
   const L = useLookups();
   const unitNozzles = useMemo(() => data.nozzles.filter((n) => unitId && n.unitId === unitId && n.active), [data.nozzles, unitId]);
   const productOfNozzle = (nozzleId?: string) => {
@@ -119,10 +178,10 @@ export function CreditForm({
       ...(salesmanId ? { salesmanId } : {}),
     };
     set((d) => ({ ...d, creditSales: [...d.creditSales, sale] }));
-    if (data.settings.smsAfterCredit !== false) {
-      const after: AppData = { ...data, days: { ...data.days, [day.date]: { ...day, creditSales: [...day.creditSales, sale] } } };
-      offerCreditSms(after, sale.customerId, day.date, sale);
-    }
+    const after: AppData = { ...data, days: { ...data.days, [day.date]: { ...day, creditSales: [...day.creditSales, sale] } } };
+    notifyCredit(after, sale.customerId, day.date, sale, (status) =>
+      updateDay(day.date, (d) => ({ ...d, creditSales: d.creditSales.map((x) => (x.id === sale.id ? { ...x, sms: status } : x)) })),
+    );
     setF({ ...f, qty: 0, amount: 0, slipNo: '' });
     onDone?.();
   };
@@ -201,12 +260,11 @@ export function CreditForm({
         <Field label="Slip #" value={f.slipNo} onChange={(t) => setF({ ...f, slipNo: t })} />
       </HStack>
       <Btn title="Save credit" onPress={add} style={{ marginTop: 10 }} />
-      {data.settings.smsAfterCredit !== false ? <Muted style={{ marginTop: 4 }}>You'll be asked to send the customer an SMS / WhatsApp.</Muted> : null}
+      {smsModeOf(data.settings) === 'auto' && canSendDirect() ? (
+        <Muted style={{ marginTop: 4 }}>An SMS with the balance goes to the customer automatically.</Muted>
+      ) : smsModeOf(data.settings) !== 'off' ? (
+        <Muted style={{ marginTop: 4 }}>You'll be asked to send the customer an SMS / WhatsApp.</Muted>
+      ) : null}
     </View>
   );
-}
-
-export function useTodayStatus(customerId?: string) {
-  const { data } = useStore();
-  return customerId ? creditStatus(data, customerId, todayStr()) : undefined;
 }

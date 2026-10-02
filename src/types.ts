@@ -21,8 +21,10 @@ export interface Settings {
   pin: string;
   /** Notes / coins used in the cash count, largest first. */
   denominations?: number[];
-  /** After a credit sale, offer to text the customer their balance. */
+  /** Older on/off switch for credit SMS; replaced by smsMode. */
   smsAfterCredit?: boolean;
+  /** After a credit sale: send SMS by itself (Android), ask first, or don't send. */
+  smsMode?: 'auto' | 'ask' | 'off';
 }
 
 export interface Product {
@@ -186,6 +188,8 @@ export interface CreditSale {
   amount: number;
   vehicleNo: string;
   slipNo: string;
+  /** Credit SMS to the customer: sent automatically, opened in the SMS app, or failed. */
+  sms?: 'sent' | 'opened' | 'failed';
 }
 
 export interface CreditReceipt {
