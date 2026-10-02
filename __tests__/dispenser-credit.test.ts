@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bankStatement, computeLedger, creditStatus, customerLedger, initialCarry } from '../src/calc';
 import { creditMessage } from '../src/creditMessage';
-import { defaultData, newDay } from '../src/defaults';
+import { defaultData, newDay, normalize } from '../src/defaults';
 import type { AppData } from '../src/types';
 
 /** The notebook page: MS (petrol) and Power on one dispenser, 10 L test each. */
@@ -116,4 +116,26 @@ test('SMS text after a credit sale', () => {
   assert.match(msg, /Cheque in clearing: Rs 100\./);
   assert.match(msg, /Balance to be paid: Rs 170\.80\./);
   assert.match(msg, /Credit availed for 0 of 30 days, 30 days left to pay\./);
+});
+
+test('old Hi-Octane default becomes Power; renamed products are left alone', () => {
+  const old = defaultData();
+  old.products = old.products.map((p) => (p.id === 'hioctane' ? { ...p, name: 'Hi-Octane', active: false } : p));
+  const n = normalize(old);
+  const power = n.products.find((p) => p.id === 'hioctane')!;
+  assert.equal(power.name, 'Power (premium)');
+  assert.equal(power.active, true);
+  const custom = defaultData();
+  custom.products = custom.products.map((p) => (p.id === 'hioctane' ? { ...p, name: 'XP95', active: false } : p));
+  assert.equal(normalize(custom).products.find((p) => p.id === 'hioctane')!.name, 'XP95');
+});
+
+test('typed bank entries carry their id so they can be deleted from the statement', () => {
+  const data = notebookDay();
+  data.days['2026-10-01'].bankTxns.push({ id: 'dep1', bankId: 'sbi', type: 'deposit', amount: 5000, unitId: 'du1', ref: '', note: '' });
+  const l = computeLedger(data);
+  const rows = bankStatement(data, l, 'sbi', '2026-10-01', '2026-10-01').rows;
+  assert.equal(rows.find((r) => r.kind === 'deposit')!.txnId, 'dep1');
+  assert.equal(rows.find((r) => r.kind === 'card')!.txnId, undefined);
+  assert.equal(l.summaries['2026-10-01'].unitCash.find((u) => u.unitId === 'du1')!.deposits[0].txnId, 'dep1');
 });

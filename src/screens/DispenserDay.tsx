@@ -5,7 +5,7 @@ import { creditMessage } from '../creditMessage';
 import { useLookups } from '../hooks';
 import { useStore } from '../store';
 import type { NozzleReading, UnitSettlement } from '../types';
-import { Btn, C, Card, Divider, Empty, HStack, ListItem, Muted, NumInput, Row, Select, diffColor, diffText } from '../ui';
+import { Btn, C, Card, Divider, Empty, HStack, ListItem, Muted, NumInput, Row, Select, confirm, diffColor, diffText } from '../ui';
 import { num, round2 } from '../utils';
 import { BankTxnForm } from './BankTxnForm';
 import { CreditForm, resendSms } from './CreditForm';
@@ -51,7 +51,9 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
   const us: UnitSettlement = day.unitSettlements?.[unitId] ?? { cash: 0, online: 0, pos: 0 };
   const setUs = (patch: Partial<UnitSettlement>) => set((d) => ({ ...d, unitSettlements: { ...(d.unitSettlements || {}), [unitId]: { ...us, ...patch } } }));
   const sheet = sum.unitSales.find((u) => u.unitId === unitId);
-  const fuels = data.products.filter((p) => p.isFuel && p.active);
+  // Active fuels, plus any product a nozzle is set to today even if switched off in Setup.
+  const usedToday = new Set(nozzleIds.map((id) => readingOf(id).productId));
+  const fuels = data.products.filter((p) => p.isFuel && (p.active || usedToday.has(p.id)));
   const credits = day.creditSales.filter((c) => c.unitId === unitId);
   const cash = sum.unitCash.find((u) => u.unitId === unitId);
 
@@ -220,9 +222,24 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
       >
         <Row label="Pending from earlier" value={num(cash?.opening ?? 0)} small />
         <Row label="+ Cash today" value={num(cash?.collected ?? 0)} small />
-        {(cash?.deposits ?? []).map((d, i) => (
-          <Row key={i} small label={`− Deposited in ${L.bankName(d.bankId)}${d.cross ? ' ⇄ cross' : ''}`} value={num(d.amount)} color={d.cross ? C.accent : undefined} />
-        ))}
+        {(cash?.deposits ?? []).map((d) => {
+          const today = day.bankTxns.some((x) => x.id === d.txnId);
+          return (
+            <View key={d.txnId} style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ flex: 1 }}>
+                <Row small label={`− Deposited in ${L.bankName(d.bankId)}${d.cross ? ' ⇄ cross' : ''}`} value={num(d.amount)} color={d.cross ? C.accent : undefined} />
+              </View>
+              {today ? (
+                <Pressable
+                  hitSlop={10}
+                  onPress={() => confirm(`Delete this deposit of ${num(d.amount)}?`, () => set((x) => ({ ...x, bankTxns: x.bankTxns.filter((t) => t.id !== d.txnId) })))}
+                >
+                  <Text style={{ color: C.red, fontSize: 16, paddingLeft: 8 }}>✕</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          );
+        })}
         <Row label="Still to deposit" value={num(cash?.closing ?? 0)} color={(cash?.closing ?? 0) > 0.004 ? C.red : C.green} bold />
         {showDeposit ? (
           <View style={{ backgroundColor: '#F7FAFD', padding: 8, borderRadius: 8, marginTop: 8 }}>

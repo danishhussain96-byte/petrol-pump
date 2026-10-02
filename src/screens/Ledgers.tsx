@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
 import { bankStatement } from '../calc';
 import { useLookups } from '../hooks';
 import { shareHtml, statementHtml } from '../report';
 import { useStore } from '../store';
-import { Btn, C, Card, ChipBar, Divider, Empty, Field, HStack, ListItem, Muted, NumInput, Row, Screen, Select, diffColor } from '../ui';
+import { Btn, C, Card, ChipBar, Divider, Empty, Field, HStack, ListItem, Muted, NumInput, Row, Screen, Select, confirm, diffColor } from '../ui';
 import { isValidDate, monthStart, num, prettyDate, round2, todayStr } from '../utils';
 import { BankImport } from './BankImport';
 import { BankTxnForm, txnTitle } from './BankTxnForm';
@@ -28,8 +28,23 @@ export function Ledgers() {
   );
 }
 
+/** Where to change bank lines that the app creates from other entries. */
+const WHERE: Record<string, string> = {
+  card: 'POS (card) sales. Change them on Daily → the dispenser → Money received.',
+  digital: 'Online / UPI sales. Change them on Daily → the dispenser → Money received.',
+  receipt: 'A payment from a credit customer or a cleared cheque. Change it in the Credit tab, or Daily → Station → Credit & recovery.',
+  expense: 'An expense paid from bank. Change it on Daily → Station → Expenses.',
+  purchase: 'Stock bought and paid from bank. Change it on Daily → Station → Stock & Dip.',
+};
+
 function BankStatementView() {
-  const { data, ledger } = useStore();
+  const { data, ledger, updateDay } = useStore();
+  const deleteTxn = (date: string, txnId: string, description: string) => {
+    if (data.days[date]?.locked) return Alert.alert('Day is locked', `Unlock ${prettyDate(date)} in Daily → Station → Summary first.`);
+    confirm(`Delete "${description}" on ${prettyDate(date)}?`, () =>
+      updateDay(date, (d) => ({ ...d, bankTxns: d.bankTxns.filter((x) => x.id !== txnId) })),
+    );
+  };
   const L = useLookups();
   const today = todayStr();
   const [bankId, setBankId] = useState<string | undefined>(data.banks[0]?.id);
@@ -55,17 +70,27 @@ function BankStatementView() {
             <Divider />
             {st.rows.length === 0 ? <Empty text="No transactions in this period" /> : null}
             {st.rows.map((r, i) => (
-              <View key={i} style={{ paddingVertical: 6, borderBottomWidth: 1, borderColor: '#EEF2F6' }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Pressable
+                key={i}
+                onPress={() => !r.txnId && Alert.alert('Entered elsewhere', WHERE[r.kind] ?? 'This entry comes from another screen.')}
+                style={{ paddingVertical: 6, borderBottomWidth: 1, borderColor: '#EEF2F6' }}
+              >
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                   <Text style={{ flex: 1, color: C.text }}>{r.description}</Text>
                   <Text style={{ color: r.credit ? C.green : C.red, fontWeight: '600' }}>{r.credit ? `+${num(r.credit)}` : `−${num(r.debit)}`}</Text>
+                  {r.txnId ? (
+                    <Pressable hitSlop={10} onPress={() => deleteTxn(r.date, r.txnId!, r.description)}>
+                      <Text style={{ color: C.red, fontSize: 18, paddingLeft: 6 }}>✕</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                   <Muted>{r.date}</Muted>
                   <Muted>Bal {num(r.balance)}</Muted>
                 </View>
-              </View>
+              </Pressable>
             ))}
+            {st.rows.length ? <Muted style={{ marginTop: 6 }}>Tap ✕ to delete an entry you typed. Other lines come from Daily / Credit screens.</Muted> : null}
             <Divider />
             <Row label="Total credits (in)" value={num(st.totalCredit)} color={C.green} />
             <Row label="Total debits (out)" value={num(st.totalDebit)} color={C.red} />

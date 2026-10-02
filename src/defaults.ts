@@ -95,10 +95,14 @@ export function normalize(raw: unknown): AppData {
       nozzles = nozzles.map((n) => ({ ...n, unitId: n.unitId ?? 'du1' }));
     }
   }
+  // v1.0 shipped premium petrol as an inactive "Hi-Octane"; later versions call it Power and use it.
+  const products = (Array.isArray(d.products) ? d.products : base.products).map((p) =>
+    p.id === 'hioctane' && p.name === 'Hi-Octane' && !p.active ? { ...p, name: 'Power (premium)', active: true } : p,
+  );
   return {
     version: 1,
     settings: { ...base.settings, ...(d.settings || {}) },
-    products: Array.isArray(d.products) ? d.products : base.products,
+    products,
     units,
     nozzles,
     salesmen: Array.isArray(d.salesmen) ? d.salesmen : [],

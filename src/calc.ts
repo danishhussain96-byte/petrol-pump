@@ -53,6 +53,7 @@ export interface UnitDeposit {
   amount: number;
   /** Deposited into a bank other than the dispenser's own. */
   cross: boolean;
+  txnId: string;
 }
 
 /** Cash of one dispenser: collected from its salesmen and deposited to bank. unitId '' = not tied to a dispenser. */
@@ -118,6 +119,8 @@ export interface BankMove {
   description: string;
   credit: number;
   debit: number;
+  /** Set for bank entries typed in by the user (can be deleted); unset for ones the app derives. */
+  txnId?: string;
 }
 
 export interface CashFlow {
@@ -471,9 +474,9 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
   for (const t of day.bankTxns) {
     if (t.type === 'transfer') {
       const extra = [t.ref, t.note].filter(Boolean).join(' · ');
-      mv({ bankId: t.bankId, kind: 'transfer', description: `Transfer to ${bankName(t.toBankId)}${extra ? ' · ' + extra : ''}`, credit: 0, debit: t.amount || 0 });
+      mv({ bankId: t.bankId, kind: 'transfer', description: `Transfer to ${bankName(t.toBankId)}${extra ? ' · ' + extra : ''}`, credit: 0, debit: t.amount || 0, txnId: t.id });
       if (t.toBankId)
-        mv({ bankId: t.toBankId, kind: 'transfer', description: `Transfer from ${bankName(t.bankId)}${extra ? ' · ' + extra : ''}`, credit: t.amount || 0, debit: 0 });
+        mv({ bankId: t.toBankId, kind: 'transfer', description: `Transfer from ${bankName(t.bankId)}${extra ? ' · ' + extra : ''}`, credit: t.amount || 0, debit: 0, txnId: t.id });
       continue;
     }
     const isCredit = t.type === 'deposit' || t.type === 'credit';
@@ -486,6 +489,7 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
       description: desc,
       credit: isCredit ? t.amount || 0 : 0,
       debit: isCredit ? 0 : t.amount || 0,
+      txnId: t.id,
     });
   }
   // Card / digital sales: per-bank amounts from settlements, plus the older single-account fields.
@@ -569,7 +573,7 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
     const u = t.unitId && units.has(t.unitId) ? t.unitId : '';
     const own = u ? units.get(u)?.bankId : undefined;
     const list = unitDeposits.get(u) ?? unitDeposits.set(u, []).get(u)!;
-    list.push({ bankId: t.bankId, amount: t.amount || 0, cross: !!own && own !== t.bankId });
+    list.push({ bankId: t.bankId, amount: t.amount || 0, cross: !!own && own !== t.bankId, txnId: t.id });
   }
   const unitCash: UnitCashRow[] = [];
   for (const unitId of [...data.units.map((u) => u.id), '']) {
