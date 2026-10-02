@@ -8,7 +8,7 @@ import type { DayRecord, NozzleReading, SalesmanSettlement } from '../types';
 import { BankTxnForm, txnSign, txnTitle, type TxnPrefill } from './BankTxnForm';
 import { CreditForm } from './CreditForm';
 import { DispenserDay } from './DispenserDay';
-import { ReceivePayment } from './ReceivePayment';
+import { ReceivePayment, notifyChequeStatus } from './ReceivePayment';
 import {
   Btn,
   C,
@@ -598,7 +598,9 @@ function Credit({ day, set }: SectionProps) {
           <ListItem
             key={r.id}
             title={L.customerName(r.customerId)}
-            sub={[r.mode === 'bank' ? `Bank: ${L.bankName(r.bankId)}` : 'Cash', r.note].filter(Boolean).join(' · ')}
+            sub={[r.mode === 'bank' ? `Bank: ${L.bankName(r.bankId)}` : 'Cash', r.unitId && L.unitName(r.unitId), r.note, r.sms === 'sent' ? '✓ SMS sent' : r.sms === 'failed' ? '✗ SMS failed' : '']
+              .filter(Boolean)
+              .join(' · ')}
             right={`${L.cur} ${num(r.amount)}`}
             onDelete={() => set((d) => ({ ...d, creditReceipts: d.creditReceipts.filter((x) => x.id !== r.id) }))}
           />
@@ -615,12 +617,20 @@ function Credit({ day, set }: SectionProps) {
               onPress={() =>
                 Alert.alert(`Cheque #${c.chequeNo}`, `${L.customerName(c.customerId)} · ${L.cur} ${num(c.amount)}`, [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Bounced', style: 'destructive', onPress: () => update((d) => ({ ...d, cheques: d.cheques.map((x) => (x.id === c.id ? { ...x, status: 'bounced', statusDate: day.date } : x)) })) },
+                  {
+                    text: 'Bounced',
+                    style: 'destructive',
+                    onPress: () => {
+                      update((d) => ({ ...d, cheques: d.cheques.map((x) => (x.id === c.id ? { ...x, status: 'bounced', statusDate: day.date } : x)) }));
+                      notifyChequeStatus(data, c, 'bounced', day.date);
+                    },
+                  },
                   {
                     text: `Cleared on ${day.date}`,
                     onPress: () => {
                       update((d) => ({ ...d, cheques: d.cheques.map((x) => (x.id === c.id ? { ...x, status: 'cleared', statusDate: day.date } : x)) }));
                       set((d) => d);
+                      notifyChequeStatus(data, c, 'cleared', day.date);
                     },
                   },
                 ])

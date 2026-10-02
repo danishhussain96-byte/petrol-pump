@@ -198,6 +198,9 @@ export interface CreditReceipt {
   amount: number;
   mode: 'cash' | 'bank';
   bankId?: string;
+  /** Dispenser page it was entered on (for the list there; the money still counts as station cash / bank). */
+  unitId?: string;
+  sms?: 'sent' | 'opened' | 'failed';
   note: string;
 }
 
@@ -207,6 +210,9 @@ export interface Expense {
   amount: number;
   mode: 'cash' | 'bank';
   bankId?: string;
+  /** Dispenser page it was entered on (for the list there; the money still counts as station cash / bank). */
+  unitId?: string;
+  sms?: 'sent' | 'opened' | 'failed';
   note: string;
 }
 

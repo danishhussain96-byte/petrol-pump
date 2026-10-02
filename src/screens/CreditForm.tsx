@@ -7,7 +7,7 @@ import { canSendDirect, sendSms, sendSmsDirect, sendWhatsApp } from '../sms';
 import { useStore } from '../store';
 import type { AppData, CreditSale, Customer, DayRecord } from '../types';
 import { Btn, C, Field, HStack, Muted, NumInput, Select } from '../ui';
-import { num, round2, uid } from '../utils';
+import { num, round2, todayStr, uid } from '../utils';
 
 export type SmsMode = 'auto' | 'ask' | 'off';
 
@@ -19,18 +19,22 @@ export function smsModeOf(settings: AppData['settings']): SmsMode {
  * After a credit sale: in "auto" mode (Android) the SMS goes out by itself; otherwise asks
  * whether to open SMS / WhatsApp. `mark` records the outcome on the credit entry.
  */
-export async function notifyCredit(
+export function notifyCredit(
   data: AppData,
   customerId: string,
   date: string,
   sale: CreditSale | undefined,
   mark?: (status: 'sent' | 'opened' | 'failed') => void,
 ) {
+  return notifyCustomer(data, customerId, creditMessage(data, customerId, date, sale), mark);
+}
+
+/** Sends `msg` to the customer per the SMS setting (auto / ask / off). */
+export async function notifyCustomer(data: AppData, customerId: string, msg: string, mark?: (status: 'sent' | 'opened' | 'failed') => void) {
   const mode = smsModeOf(data.settings);
   if (mode === 'off') return;
   const c = data.customers.find((x) => x.id === customerId);
   if (!c) return;
-  const msg = creditMessage(data, customerId, date, sale);
   if (!c.phone) {
     Alert.alert('No SMS sent', `${c.name} has no mobile number. Add it in the Credit tab.`);
     return;
@@ -125,6 +129,8 @@ export function CreditForm({
   });
   const [newCust, setNewCust] = useState<{ name: string; phone: string; vehicleNo: string; creditDays: number } | null>(null);
 
+  // Balances shown are the latest (a back-dated day still shows what is owed now).
+  const asOf = day.date > todayStr() ? day.date : todayStr();
   // Customers who took credit on this dispenser come first.
   const customerOptions = useMemo(() => {
     const used = new Map<string, number>();
@@ -134,15 +140,15 @@ export function CreditForm({
       .filter((c) => c.active)
       .sort((a, b) => (used.get(b.id) || 0) - (used.get(a.id) || 0) || a.name.localeCompare(b.name))
       .map((c) => {
-        const st = creditStatus(data, c.id, day.date);
+        const st = creditStatus(data, c.id, asOf);
         return { value: c.id, label: c.name, sub: [c.vehicleNo, `due ${L.cur} ${num(st.balance)}`].filter(Boolean).join(' · ') };
       });
-  }, [data, unitId, day.date, L.cur]);
+  }, [data, unitId, asOf, L.cur]);
 
   const customer = f.customerId ? L.customer.get(f.customerId) : undefined;
   const vehicles = (customer?.vehicleNo ?? '').split(',').map((v) => v.trim()).filter(Boolean);
   const rate = rateFor(f.productId);
-  const status = f.customerId ? creditStatus(data, f.customerId, day.date) : undefined;
+  const status = f.customerId ? creditStatus(data, f.customerId, asOf) : undefined;
 
   const saveNewCustomer = () => {
     if (!newCust?.name.trim()) return Alert.alert('Name required');
@@ -217,7 +223,7 @@ export function CreditForm({
       </HStack>
       {status ? (
         <Muted style={{ marginTop: 4 }}>
-          Due {L.cur} {num(status.balance)}
+          Due now {L.cur} {num(status.balance)}
           {status.pendingCheques ? ` · cheque in clearing ${num(status.pendingCheques)}` : ''}
           {status.daysLeft !== undefined ? ` · ${status.daysLeft >= 0 ? `${status.daysLeft} days left` : `overdue ${-status.daysLeft} days`}` : ''}
           {status.overLimit ? ' · ⚠ over credit limit' : ''}

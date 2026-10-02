@@ -9,7 +9,7 @@ import { useStore } from '../store';
 import type { Cheque, Customer } from '../types';
 import { Btn, C, Card, Chip, Divider, Empty, Field, HStack, ListItem, Muted, NumInput, Row, Screen, Stat, confirm } from '../ui';
 import { isValidDate, num, prettyDate, todayStr, uid } from '../utils';
-import { ReceivePayment } from './ReceivePayment';
+import { ReceivePayment, notifyChequeStatus } from './ReceivePayment';
 
 function daysText(st: CreditStatus): string {
   if (st.balance <= 0.005) return 'Nothing due';
@@ -193,6 +193,7 @@ function CustomerDetail({ id, onBack }: { id: string; onBack: () => void }) {
                     onPress={() => {
                       if (!isValidDate(clearing.date)) return Alert.alert('Invalid date', 'Use format YYYY-MM-DD');
                       setCheque(ch, { status: 'cleared', statusDate: clearing.date });
+                      notifyChequeStatus(data, ch, 'cleared', clearing.date);
                       updateDay(clearing.date, (d) => d); // make sure that day exists so the bank shows the credit
                       setClearing(null);
                     }}
@@ -206,7 +207,13 @@ function CustomerDetail({ id, onBack }: { id: string; onBack: () => void }) {
                     title="Bounced"
                     small
                     kind="danger"
-                    onPress={() => confirm(`Mark cheque #${ch.chequeNo} as bounced? The amount stays due.`, () => setCheque(ch, { status: 'bounced', statusDate: today }), 'Bounced')}
+                    onPress={() => confirm(`Mark cheque #${ch.chequeNo} as bounced? The amount stays due.`, () => {
+                          setCheque(ch, { status: 'bounced', statusDate: today });
+                          notifyChequeStatus(data, ch, 'bounced', today);
+                        },
+                        'Bounced',
+                      )
+                    }
                   />
                 </HStack>
               )

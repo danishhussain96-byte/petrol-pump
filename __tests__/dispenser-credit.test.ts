@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bankStatement, computeLedger, creditStatus, customerLedger, initialCarry } from '../src/calc';
-import { creditMessage } from '../src/creditMessage';
+import { bankStatement, computeLedger, emptyDay, creditStatus, customerLedger, initialCarry } from '../src/calc';
+import { creditMessage, paymentMessage } from '../src/creditMessage';
 import { defaultData, newDay, normalize } from '../src/defaults';
 import type { AppData } from '../src/types';
 
@@ -110,12 +110,37 @@ test('SMS text after a credit sale', () => {
   const data = notebookDay();
   data.cheques = [{ id: 'q1', customerId: 'c1', amount: 100, chequeNo: '1', drawnOn: '', chequeDate: '', receivedDate: '2026-10-01', status: 'pending', note: '' }];
   const sale = data.days['2026-10-01'].creditSales[0];
-  const msg = creditMessage(data, 'c1', '2026-10-01', sale);
+  const msg = creditMessage(data, 'c1', '2026-10-01', sale, '2026-10-01');
   assert.match(msg, /^Test Station: Dear Sharma Transport, credit of Rs 270\.80 on Thu, 1 Oct 2026 \(Petrol 2\.50 L, vehicle MH12AB1234\)\./);
   assert.match(msg, /Total amount due: Rs 270\.80\./);
   assert.match(msg, /Cheque in clearing: Rs 100\./);
   assert.match(msg, /Balance to be paid: Rs 170\.80\./);
   assert.match(msg, /Credit availed for 0 of 30 days, 30 days left to pay\./);
+});
+
+test('balance in texts is the latest one, including payments after the credit day', () => {
+  const data = notebookDay();
+  const sale = data.days['2026-10-01'].creditSales[0];
+  data.days['2026-10-03'] = { ...emptyDay('2026-10-03'), creditReceipts: [{ id: 'r1', customerId: 'c1', amount: 70.8, mode: 'cash', note: '' }] };
+  // Credit entered later for 1 Oct, viewed on 3 Oct: shows what is owed now.
+  const msg = creditMessage(data, 'c1', '2026-10-01', sale, '2026-10-03');
+  assert.match(msg, /credit of Rs 270\.80 on Thu, 1 Oct 2026/);
+  assert.match(msg, /Total amount due: Rs 200\./);
+  assert.match(msg, /Credit availed for 2 of 30 days, 28 days left to pay\./);
+
+  const paid = paymentMessage(data, 'c1', '2026-10-03', { kind: 'received', amount: 70.8, mode: 'cash' }, '2026-10-03');
+  assert.match(paid, /^Test Station: Dear Sharma Transport, payment of Rs 70\.80 received in cash on Sat, 3 Oct 2026\./);
+  assert.match(paid, /Total amount due: Rs 200\./);
+
+  data.cheques = [{ id: 'q1', customerId: 'c1', amount: 200, chequeNo: '77', drawnOn: '', chequeDate: '', receivedDate: '2026-10-03', status: 'pending', note: '' }];
+  const chq = paymentMessage(data, 'c1', '2026-10-03', { kind: 'cheque-received', amount: 200, chequeNo: '77' }, '2026-10-03');
+  assert.match(chq, /cheque #77 for Rs 200 received on Sat, 3 Oct 2026\. It will be adjusted once the cheque clears\./);
+  assert.match(chq, /Balance to be paid: Rs 0\./);
+
+  data.cheques[0] = { ...data.cheques[0], status: 'cleared', statusDate: '2026-10-05' };
+  const cleared = paymentMessage(data, 'c1', '2026-10-05', { kind: 'cheque-cleared', amount: 200, chequeNo: '77' }, '2026-10-05');
+  assert.match(cleared, /cheque #77 for Rs 200 has cleared on Mon, 5 Oct 2026/);
+  assert.match(cleared, /Nothing is due now\./);
 });
 
 test('old Hi-Octane default becomes Power; renamed products are left alone', () => {

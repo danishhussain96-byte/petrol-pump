@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
-import { carryFor, rateOf } from '../calc';
+import { carryFor, creditStatus, rateOf } from '../calc';
 import { creditMessage } from '../creditMessage';
 import { useLookups } from '../hooks';
 import { useStore } from '../store';
 import type { NozzleReading, UnitSettlement } from '../types';
 import { Btn, C, Card, Divider, Empty, HStack, ListItem, Muted, NumInput, Row, Select, confirm, diffColor, diffText } from '../ui';
-import { num, round2 } from '../utils';
+import { num, round2, todayStr } from '../utils';
 import { BankTxnForm } from './BankTxnForm';
 import { CreditForm, resendSms } from './CreditForm';
+import { ReceivePayment } from './ReceivePayment';
 import type { SectionProps } from './DayEntry';
 
 /** Everything about one dispenser for the day on one page: nozzles, sale, receipts, credit, deposit. */
@@ -16,6 +17,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
   const { data, ledger, update, updateDay } = useStore();
   const L = useLookups();
   const [showCredit, setShowCredit] = useState(false);
+  const [showPay, setShowPay] = useState(false);
   const [showDeposit, setShowDeposit] = useState(false);
   const unit = L.unit.get(unitId);
   const carry = carryFor(data, ledger, day.date);
@@ -55,6 +57,8 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
   const usedToday = new Set(nozzleIds.map((id) => readingOf(id).productId));
   const fuels = data.products.filter((p) => p.isFuel && (p.active || usedToday.has(p.id)));
   const credits = day.creditSales.filter((c) => c.unitId === unitId);
+  const receipts = day.creditReceipts.filter((r) => r.unitId === unitId);
+  const asOf = day.date > todayStr() ? day.date : todayStr();
   const cash = sum.unitCash.find((u) => u.unitId === unitId);
 
   const changeProduct = (nozzleId: string, productId: string) => {
@@ -179,16 +183,44 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
 
       <Card
         title={`Credit (${credits.length})`}
-        right={<Btn title={showCredit ? 'Close' : '+ Add credit'} small kind={showCredit ? 'secondary' : 'primary'} onPress={() => setShowCredit(!showCredit)} />}
+        right={
+          <HStack>
+            <Btn
+              title={showPay ? 'Close' : 'Receive'}
+              small
+              kind="secondary"
+              onPress={() => {
+                setShowPay(!showPay);
+                setShowCredit(false);
+              }}
+            />
+            <Btn
+              title={showCredit ? 'Close' : '+ Credit'}
+              small
+              kind={showCredit ? 'secondary' : 'primary'}
+              onPress={() => {
+                setShowCredit(!showCredit);
+                setShowPay(false);
+              }}
+            />
+          </HStack>
+        }
       >
         {showCredit ? (
           <View style={{ backgroundColor: '#F7FAFD', padding: 8, borderRadius: 8, marginBottom: 8 }}>
             <CreditForm day={day} set={set} unitId={unitId} />
           </View>
         ) : null}
+        {showPay ? (
+          <View style={{ backgroundColor: '#F2FAF5', padding: 8, borderRadius: 8, marginBottom: 8 }}>
+            <Text style={{ fontWeight: '700', color: C.text }}>Payment from credit customer</Text>
+            <ReceivePayment date={day.date} unitId={unitId} onDone={() => setShowPay(false)} />
+          </View>
+        ) : null}
         {credits.length === 0 ? <Empty text="No credit on this dispenser" /> : null}
         {credits.map((c) => {
           const cust = L.customer.get(c.customerId);
+          const due = creditStatus(data, c.customerId, asOf).balance;
           return (
             <ListItem
               key={c.id}
@@ -198,6 +230,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
                 c.productId && `${L.productName(c.productId)} ${num(c.qty)} L`,
                 c.vehicleNo,
                 c.slipNo && `Slip ${c.slipNo}`,
+                `due now ${num(due)}`,
                 c.sms === 'sent' ? '✓ SMS sent' : c.sms === 'failed' ? '✗ SMS failed' : c.sms === 'opened' ? 'SMS opened' : '',
               ]
                 .filter(Boolean)
@@ -214,6 +247,28 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
           );
         })}
         {credits.length ? <Muted style={{ marginTop: 4 }}>Tap 💬 to send that customer an SMS again.</Muted> : null}
+        {receipts.length ? (
+          <>
+            <Divider />
+            <Text style={{ fontWeight: '700', color: C.text, marginBottom: 2 }}>Payments received here</Text>
+            {receipts.map((r) => (
+              <ListItem
+                key={r.id}
+                title={`${L.customerName(r.customerId)} · ${L.cur} ${num(r.amount)}`}
+                sub={[
+                  r.mode === 'bank' ? `Bank: ${L.bankName(r.bankId)}` : 'Cash',
+                  `due now ${num(creditStatus(data, r.customerId, asOf).balance)}`,
+                  r.sms === 'sent' ? '✓ SMS sent' : r.sms === 'failed' ? '✗ SMS failed' : '',
+                  r.note,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+                onDelete={() => set((d) => ({ ...d, creditReceipts: d.creditReceipts.filter((x) => x.id !== r.id) }))}
+              />
+            ))}
+            <Muted style={{ marginTop: 4 }}>Payments are customer recoveries, kept out of this dispenser's sale cash (shown in Station → Credit).</Muted>
+          </>
+        ) : null}
       </Card>
 
       <Card
