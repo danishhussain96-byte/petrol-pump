@@ -171,3 +171,55 @@ test('v1.0.0 data migrates to dispensing units', () => {
   assert.equal(kept.units.length, 1);
   assert.deepEqual(kept.nozzles.map((n) => [n.id, n.unitId]), [['n1', 'du1'], ['n2', 'du1'], ['n3', 'du1'], ['n4', 'du1']]);
 });
+
+test('tanker purchases: cost per litre from total amount, running average across tankers', () => {
+  const data = defaultData();
+  data.products.find((p) => p.id === 'petrol')!.rate = 270;
+  data.products.find((p) => p.id === 'petrol')!.openingStock = 1000; // cost unknown
+  data.nozzles = [{ id: 'n1', name: 'N1', productId: 'petrol', openingReading: 0, active: true }];
+
+  // Day 1: 12,000 L tanker invoiced, 11,950 L received, total Rs 3,060,000 → 256.0669/L
+  const d1 = newDay(data, '2026-10-01', initialCarry(data));
+  d1.purchases.push({ id: 't1', productId: 'petrol', invoiceQty: 12000, qty: 11950, amount: 3060000, rate: 0, supplier: 'PSO', invoiceNo: 'B-1', payMode: 'credit' });
+  d1.readings = [{ nozzleId: 'n1', opening: 0, closing: 2950, testLitres: 0 }];
+  data.days[d1.date] = d1;
+  let l = computeLedger(data);
+  const r1 = l.summaries[d1.date].stock.find((r) => r.productId === 'petrol')!;
+  // unknown-cost opening stock is ignored, so the tanker sets the cost
+  assert.equal(r1.costRate, 256.0669);
+  assert.equal(r1.closing, 1000 + 11950 - 2950);
+  assert.equal(l.summaries[d1.date].grossMargin, Math.round(2950 * (270 - 256.0669) * 100) / 100);
+
+  // Day 2: smaller tanker at a higher price: 5,000 L for Rs 1,325,000 (265/L)
+  const d2 = newDay(data, '2026-10-02', l.final);
+  d2.purchases.push({ id: 't2', productId: 'petrol', qty: 5000, amount: 1325000, rate: 0, supplier: '', invoiceNo: '', payMode: 'cash' });
+  data.days[d2.date] = d2;
+  l = computeLedger(data);
+  const r2 = l.summaries[d2.date].stock.find((r) => r.productId === 'petrol')!;
+  // (10,000 × 256.0669 + 1,325,000) / 15,000
+  assert.equal(r2.costRate, Math.round(((10000 * 256.0669 + 1325000) / 15000) * 10000) / 10000);
+  assert.equal(l.summaries[d2.date].cash.purchases, 1325000);
+  assert.equal(l.summaries[d2.date].purchasesAmount, 1325000);
+});
+
+test('sale with no known cost is left out of margin', () => {
+  const data = defaultData();
+  data.products.find((p) => p.id === 'petrol')!.rate = 270;
+  data.nozzles = [{ id: 'n1', name: 'N1', productId: 'petrol', openingReading: 0, active: true }];
+  const d = newDay(data, '2026-10-01', initialCarry(data));
+  d.readings = [{ nozzleId: 'n1', opening: 0, closing: 100, testLitres: 0 }];
+  data.days[d.date] = d;
+  const s = computeLedger(data).summaries[d.date];
+  assert.equal(s.grossMargin, 0);
+  assert.deepEqual(s.costUnknown, ['petrol']);
+});
+
+test('day opened before rates were set follows the product rate', () => {
+  const data = defaultData();
+  data.nozzles = [{ id: 'n1', name: 'N1', productId: 'petrol', openingReading: 0, active: true }];
+  const d = newDay(data, '2026-10-01', initialCarry(data)); // petrol rate still 0
+  d.readings = [{ nozzleId: 'n1', opening: 0, closing: 10, testLitres: 0 }];
+  data.days[d.date] = d;
+  data.products.find((p) => p.id === 'petrol')!.rate = 270;
+  assert.equal(computeLedger(data).summaries[d.date].fuelAmount, 2700);
+});

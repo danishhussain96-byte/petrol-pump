@@ -1,6 +1,6 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { COUNTER, type DaySummary, type PeriodReport, type Statement } from './calc';
+import { COUNTER, purchaseAmount, type DaySummary, type PeriodReport, type Statement } from './calc';
 import type { AppData } from './types';
 import { num, prettyDate } from './utils';
 
@@ -87,9 +87,17 @@ export function dayReportHtml(data: AppData, s: DaySummary): string {
   );
   b += '<h2>Stock</h2>';
   b += table(
-    ['Product', 'Opening', 'Received', 'Sold', 'Book', 'Dip', 'Gain/Loss', 'Closing'],
-    s.stock.map((r) => [N.product(r.productId), r.opening, r.received, r.sold, r.book, r.dip === undefined ? '—' : r.dip, r.variance, r.closing]),
+    ['Product', 'Opening', 'Received', 'Sold', 'Book', 'Dip', 'Gain/Loss', 'Closing', 'Avg cost'],
+    s.stock.map((r) => [N.product(r.productId), r.opening, r.received, r.sold, r.book, r.dip === undefined ? '—' : r.dip, r.variance, r.closing, r.costRate || '—']),
   );
+  if (day?.purchases.length) {
+    b += '<h2>Stock received</h2>';
+    b += table(
+      ['Product', 'Invoice qty', 'Received', 'Amount', 'Cost / unit', 'Supplier', 'Paid'],
+      day.purchases.map((p) => [N.product(p.productId), p.invoiceQty ?? p.qty, p.qty, purchaseAmount(p), p.qty ? purchaseAmount(p) / p.qty : 0, [p.supplier, p.invoiceNo].filter(Boolean).join(' '), p.payMode]),
+      1,
+    );
+  }
   if (day?.creditSales.length || day?.creditReceipts.length) {
     b += '<h2>Credit</h2>';
     b += table(

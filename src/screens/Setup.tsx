@@ -88,6 +88,8 @@ function ActiveSwitch({ value, onChange }: { value: boolean; onChange: (v: boole
 // ---------- Products ----------
 function Products() {
   const { items, save, remove } = useList('products');
+  const { ledger } = useStore();
+  const avgCost = ledger.final.cost;
   const L = useLookups();
   const [ed, setEd] = useState<Product | null>(null);
   const blank = (): Product => ({ id: uid(), name: '', unit: 'L', isFuel: true, rate: 0, costRate: 0, openingStock: 0, capacity: 0, minStock: 0, active: true });
@@ -98,13 +100,15 @@ function Products() {
           <ListItem
             key={p.id}
             title={`${p.name}${p.active ? '' : ' (inactive)'}`}
-            sub={`${p.isFuel ? 'Fuel' : 'Item'} · cost ${num(p.costRate)} · opening ${num(p.openingStock)} ${p.unit}`}
+            sub={`${p.isFuel ? 'Fuel' : 'Item'} · avg cost ${avgCost[p.id] ? num(avgCost[p.id]) : '—'} · opening ${num(p.openingStock)} ${p.unit}`}
             right={`${L.cur} ${num(p.rate)}/${p.unit}`}
             onPress={() => setEd(p)}
           />
         ))}
       </Card>
-      <Muted>Changing a rate applies to new days. To change a rate for one day, edit it in that day's Meters tab.</Muted>
+      <Muted>
+        Changing the sale rate applies from the next new day. If the rate changes on a day already opened, edit it in that day's Meters tab. Average cost updates by itself with every tanker received.
+      </Muted>
       {ed ? (
         <EditModal
           title={ed.name || 'New product'}
@@ -125,7 +129,6 @@ function Products() {
           <HStack>
             <Field label="Unit" value={ed.unit} onChange={(t) => setEd({ ...ed, unit: t })} />
             <NumInput label="Sale rate" value={ed.rate} onChange={(v) => setEd({ ...ed, rate: v ?? 0 })} />
-            <NumInput label="Cost rate" value={ed.costRate} onChange={(v) => setEd({ ...ed, costRate: v ?? 0 })} />
           </HStack>
           <HStack>
             <NumInput label="Opening stock" value={ed.openingStock} onChange={(v) => setEd({ ...ed, openingStock: v ?? 0 })} />
@@ -133,6 +136,10 @@ function Products() {
             <NumInput label="Low-stock alert" value={ed.minStock} onChange={(v) => setEd({ ...ed, minStock: v ?? 0 })} />
           </HStack>
           <Muted style={{ marginTop: 6 }}>Opening stock = stock before the first day you record in this app.</Muted>
+          <NumInput label={`Cost per ${ed.unit || 'unit'} of opening stock (optional)`} value={ed.costRate} onChange={(v) => setEd({ ...ed, costRate: v ?? 0 })} />
+          <Muted style={{ marginTop: 6 }}>
+            Leave 0 if not known. The app works out cost from each tanker's total amount ÷ litres and keeps a running average, so changing tanker prices are handled automatically.
+          </Muted>
           <ActiveSwitch value={ed.active} onChange={(v) => setEd({ ...ed, active: v })} />
         </EditModal>
       ) : null}

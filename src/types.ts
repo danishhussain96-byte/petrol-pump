@@ -28,7 +28,10 @@ export interface Product {
   isFuel: boolean;
   /** Current sale price per unit. A snapshot is stored on each day. */
   rate: number;
-  /** Purchase cost per unit — used for profit estimates. */
+  /**
+   * Cost per unit of the opening stock (optional). After that the app keeps a running
+   * average cost from each purchase's total amount ÷ quantity.
+   */
   costRate: number;
   /** Stock before the first recorded day. */
   openingStock: number;
@@ -103,10 +106,17 @@ export interface ItemSale {
   salesmanId?: string;
 }
 
+/** Stock received, e.g. one tanker. */
 export interface Purchase {
   id: string;
   productId: string;
+  /** Quantity actually received into the tank (litres / units). Drives stock. */
   qty: number;
+  /** Quantity on the invoice / bilty, when different from what was received. */
+  invoiceQty?: number;
+  /** Total amount paid for this tanker / lot. Cost per litre = amount ÷ qty. */
+  amount?: number;
+  /** Older entries stored a per-unit rate instead of a total amount. */
   rate: number;
   supplier: string;
   invoiceNo: string;
@@ -188,7 +198,7 @@ export interface DayRecord {
   date: string; // YYYY-MM-DD
   /** Sale price snapshot for the day, keyed by productId. */
   rates: Record<string, number>;
-  /** Cost price snapshot for the day, keyed by productId. */
+  /** No longer used: cost is the running average from purchases. Kept for old data. */
   costRates: Record<string, number>;
   readings: NozzleReading[];
   itemSales: ItemSale[];

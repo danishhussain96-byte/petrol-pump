@@ -61,10 +61,9 @@ export function defaultData(): AppData {
 /** A fresh day with today's rates and nozzle openings carried from the previous closing. */
 export function newDay(data: AppData, date: string, carry: Carry): DayRecord {
   const day = emptyDay(date);
-  for (const p of data.products) {
-    day.rates[p.id] = p.rate;
-    day.costRates[p.id] = p.costRate;
-  }
+  // Snapshot sale rates so a later rate change doesn't rewrite past days.
+  // A rate of 0 means "not set yet", so it keeps following the product rate.
+  for (const p of data.products) if (p.rate) day.rates[p.id] = p.rate;
   day.readings = data.nozzles
     .filter((n) => n.active)
     .map((n) => {

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
-import { COUNTER, DENOMINATIONS, carryFor, computeDay, parsePaymentKey, payBankFor, paymentKey, rateOf, type DaySummary, type PayKind } from '../calc';
+import { COUNTER, DENOMINATIONS, carryFor, computeDay, parsePaymentKey, payBankFor, paymentKey, purchaseAmount, rateOf, type DaySummary, type PayKind } from '../calc';
 import { useLookups } from '../hooks';
 import { shareDayReport } from '../report';
 import { useStore } from '../store';
@@ -273,13 +273,30 @@ function Items({ day, set }: SectionProps) {
 
 function Stock({ day, sum, set }: SectionProps) {
   const L = useLookups();
-  const [f, setF] = useState({ productId: undefined as string | undefined, qty: 0, rate: 0, supplier: '', invoiceNo: '', payMode: 'credit' as 'cash' | 'bank' | 'credit', bankId: undefined as string | undefined });
+  const blank = { invoiceQty: 0, qty: 0, qtyEdited: false, amount: 0, invoiceNo: '' };
+  const [f, setF] = useState({
+    productId: undefined as string | undefined,
+    ...blank,
+    supplier: '',
+    payMode: 'credit' as 'cash' | 'bank' | 'credit',
+    bankId: undefined as string | undefined,
+  });
+  const unit = (f.productId && L.product.get(f.productId)?.unit) || 'L';
+  const perUnit = f.qty > 0 ? f.amount / f.qty : 0;
+  const short = f.invoiceQty > 0 ? round2(f.invoiceQty - f.qty) : 0;
   const add = () => {
     if (!f.productId || !f.qty) return Alert.alert('Missing', 'Select product and enter quantity received.');
+    if (!f.amount) return Alert.alert('Missing', 'Enter the total amount of this tanker / purchase.');
     if (f.payMode === 'bank' && !f.bankId) return Alert.alert('Missing', 'Select the bank account used for payment.');
-    const { productId } = f;
-    set((d) => ({ ...d, purchases: [...d.purchases, { id: uid(), ...f, productId }] }));
-    setF({ ...f, qty: 0, invoiceNo: '' });
+    const { productId, qty, invoiceQty, amount, supplier, invoiceNo, payMode, bankId } = f;
+    set((d) => ({
+      ...d,
+      purchases: [
+        ...d.purchases,
+        { id: uid(), productId, qty, invoiceQty: invoiceQty || undefined, amount, rate: round2(perUnit), supplier, invoiceNo, payMode, bankId },
+      ],
+    }));
+    setF({ ...f, ...blank });
   };
   return (
     <>
@@ -296,6 +313,7 @@ function Stock({ day, sum, set }: SectionProps) {
               <Row small label="+ Received" value={num(r.received)} />
               <Row small label="− Sold" value={num(r.sold)} />
               <Row small label="= Book closing" value={num(r.book)} bold />
+              <Row small label="Average cost" value={r.costRate > 0 ? `${L.cur} ${num(r.costRate)} / ${p?.unit ?? 'L'}` : 'not known yet'} />
               <HStack>
                 <NumInput
                   label={p?.isFuel ? 'Dip / physical stock (optional)' : 'Physical count (optional)'}
@@ -311,12 +329,22 @@ function Stock({ day, sum, set }: SectionProps) {
           );
         })}
       </Card>
-      <Card title="Receive stock (purchase / decanting)">
-        <Select label="Product" value={f.productId} options={L.opt.products} onChange={(v) => setF({ ...f, productId: v, rate: (v && L.product.get(v)?.costRate) || f.rate })} />
+      <Card title="Receive tanker / stock">
+        <Select label="Product" value={f.productId} options={L.opt.products} onChange={(v) => setF({ ...f, productId: v })} />
         <HStack>
-          <NumInput label="Quantity" value={f.qty} onChange={(v) => setF({ ...f, qty: v ?? 0 })} />
-          <NumInput label="Cost rate" value={f.rate} onChange={(v) => setF({ ...f, rate: v ?? 0 })} />
+          <NumInput
+            label={`${unit} on invoice / bilty`}
+            value={f.invoiceQty}
+            onChange={(v) => setF({ ...f, invoiceQty: v ?? 0, qty: f.qtyEdited ? f.qty : v ?? 0 })}
+          />
+          <NumInput label={`${unit} received (dip)`} value={f.qty} onChange={(v) => setF({ ...f, qty: v ?? 0, qtyEdited: true })} />
         </HStack>
+        <NumInput label={`Total amount of this ${unit === 'L' ? 'tanker' : 'purchase'}`} value={f.amount} onChange={(v) => setF({ ...f, amount: v ?? 0 })} />
+        {f.qty > 0 && f.amount > 0 ? (
+          <Row small label={`Cost per ${unit}`} value={`${L.cur} ${num(perUnit, 4)}`} bold />
+        ) : null}
+        {short > 0 ? <Row small label="Short received" value={`${num(short)} ${unit}`} color={C.red} /> : null}
+        {short < 0 ? <Row small label="Extra received" value={`${num(-short)} ${unit}`} color={C.green} /> : null}
         <HStack>
           <Field label="Supplier" value={f.supplier} onChange={(t) => setF({ ...f, supplier: t })} />
           <Field label="Invoice / Bilty #" value={f.invoiceNo} onChange={(t) => setF({ ...f, invoiceNo: t })} />
@@ -334,7 +362,6 @@ function Stock({ day, sum, set }: SectionProps) {
           />
           {f.payMode === 'bank' ? <Select label="Bank" value={f.bankId} options={L.opt.banks} onChange={(v) => setF({ ...f, bankId: v })} /> : null}
         </HStack>
-        <Muted style={{ marginTop: 6 }}>Total: {L.cur} {num(f.qty * f.rate)}</Muted>
         <Btn title="Add stock received" onPress={add} style={{ marginTop: 10 }} />
       </Card>
       <Card title="Received today">
@@ -342,9 +369,17 @@ function Stock({ day, sum, set }: SectionProps) {
         {day.purchases.map((p) => (
           <ListItem
             key={p.id}
-            title={`${L.productName(p.productId)} · ${num(p.qty)} @ ${num(p.rate)}`}
-            sub={[p.supplier, p.invoiceNo, p.payMode === 'bank' ? `Bank: ${L.bankName(p.bankId)}` : p.payMode].filter(Boolean).join(' · ')}
-            right={`${L.cur} ${num(p.qty * p.rate)}`}
+            title={`${L.productName(p.productId)} · ${num(p.qty)} ${L.product.get(p.productId)?.unit ?? ''}`}
+            sub={[
+              p.qty ? `@ ${num(purchaseAmount(p) / p.qty, 4)}` : '',
+              p.invoiceQty && p.invoiceQty !== p.qty ? `invoice ${num(p.invoiceQty)}` : '',
+              p.supplier,
+              p.invoiceNo,
+              p.payMode === 'bank' ? `Bank: ${L.bankName(p.bankId)}` : p.payMode,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            right={`${L.cur} ${num(purchaseAmount(p))}`}
             onDelete={() => set((d) => ({ ...d, purchases: d.purchases.filter((x) => x.id !== p.id) }))}
           />
         ))}
@@ -745,11 +780,16 @@ function Summary({ day, sum, set }: SectionProps) {
         <Row label="Cash from salesmen" value={num(sum.cash.salesCash)} />
       </Card>
       <Card title="Profit (estimate)">
-        <Row label="Gross margin (sale − cost)" value={num(sum.grossMargin)} />
+        <Row label="Gross margin (sale − average cost)" value={num(sum.grossMargin)} />
         <Row label="Stock gain / loss (at cost)" value={num(sum.stockGainLossValue)} />
         <Row label="Other income" value={num(sum.otherIncome)} />
         <Row label="Expenses" value={`−${num(sum.expenses)}`} />
         <Row label="Net profit" value={`${L.cur} ${num(sum.netProfit)}`} bold color={sum.netProfit < 0 ? C.red : C.green} />
+        {sum.costUnknown.length ? (
+          <Muted style={{ marginTop: 4 }}>
+            Cost not known yet for {sum.costUnknown.map((id) => L.productName(id)).join(', ')}, so it is left out of profit. Enter a tanker under Stock & Dip.
+          </Muted>
+        ) : null}
       </Card>
       <Card title="Notes">
         <Field value={day.notes} onChange={(t) => set((d) => ({ ...d, notes: t }))} multiline placeholder="Any remarks for the day…" />

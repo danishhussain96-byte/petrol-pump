@@ -1,6 +1,6 @@
 // Pure calculation logic (no React) — daily sales, stock, salesman settlement,
 // cash in hand, bank statements and customer ledgers. Covered by tests in __tests__/.
-import type { AppData, BankTxnType, DayRecord, Product } from './types';
+import type { AppData, BankTxnType, DayRecord, Product, Purchase } from './types';
 import { round2, sum } from './utils';
 
 export const DENOMINATIONS = [5000, 1000, 500, 100, 50, 20, 10, 5, 2, 1];
@@ -121,8 +121,10 @@ export interface DaySummary {
   purchasesAmount: number;
   cash: CashFlow;
   bankMoves: BankMove[];
-  /** Σ sold × (rate − cost) − expenses + stock gain/loss at cost. */
+  /** Σ sold × (rate − average cost), for products whose cost is known. */
   grossMargin: number;
+  /** Products sold today whose cost is not known yet (left out of the margin). */
+  costUnknown: string[];
   stockGainLossValue: number;
   netProfit: number;
   shortExcess: number;
@@ -130,18 +132,30 @@ export interface DaySummary {
 
 export interface Carry {
   stock: Record<string, number>;
+  /** Running average cost per unit, by productId (0 = not known yet). */
+  cost: Record<string, number>;
   cash: number;
   meters: Record<string, number>;
 }
 
 export function rateOf(day: DayRecord, p: Product): number {
   const r = day.rates[p.id];
-  return r === undefined ? p.rate : r;
+  return r ? r : p.rate;
 }
 
-export function costOf(day: DayRecord, p: Product): number {
-  const r = day.costRates[p.id];
-  return r === undefined ? p.costRate : r;
+/** Total paid for a purchase (older entries stored a per-unit rate). */
+export function purchaseAmount(p: Purchase): number {
+  return p.amount !== undefined ? p.amount || 0 : (p.qty || 0) * (p.rate || 0);
+}
+
+/**
+ * Running (weighted) average cost per unit after receiving stock.
+ * Stock whose cost is unknown (cost 0) is ignored, so the first tanker sets the cost.
+ */
+export function averageCost(openingQty: number, openingCost: number, receivedQty: number, receivedAmount: number): number {
+  if (receivedQty <= 0) return openingCost;
+  const known = openingCost > 0 ? Math.max(0, openingQty) : 0;
+  return Math.round(((known * openingCost + receivedAmount) / (known + receivedQty)) * 10000) / 10000;
 }
 
 export function emptyDay(date: string): DayRecord {
@@ -168,10 +182,14 @@ export function emptyDay(date: string): DayRecord {
 
 export function initialCarry(data: AppData): Carry {
   const stock: Record<string, number> = {};
-  for (const p of data.products) stock[p.id] = p.openingStock || 0;
+  const cost: Record<string, number> = {};
+  for (const p of data.products) {
+    stock[p.id] = p.openingStock || 0;
+    cost[p.id] = p.costRate || 0;
+  }
   const meters: Record<string, number> = {};
   for (const n of data.nozzles) meters[n.id] = n.openingReading || 0;
-  return { stock, cash: data.settings.openingCash || 0, meters };
+  return { stock, cost, cash: data.settings.openingCash || 0, meters };
 }
 
 export function countedCash(day: DayRecord): number {
@@ -274,7 +292,11 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
   for (const l of nozzleLines) soldQty[l.productId] = (soldQty[l.productId] || 0) + l.litres;
   for (const s of day.itemSales) soldQty[s.productId] = (soldQty[s.productId] || 0) + (s.qty || 0);
   const receivedQty: Record<string, number> = {};
-  for (const p of day.purchases) receivedQty[p.productId] = (receivedQty[p.productId] || 0) + (p.qty || 0);
+  const receivedAmount: Record<string, number> = {};
+  for (const p of day.purchases) {
+    receivedQty[p.productId] = (receivedQty[p.productId] || 0) + (p.qty || 0);
+    receivedAmount[p.productId] = (receivedAmount[p.productId] || 0) + purchaseAmount(p);
+  }
 
   const stock: StockRow[] = [];
   for (const p of data.products) {
@@ -298,7 +320,7 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
       closing: hasDip ? dip : book,
       rate: rt,
       saleAmount: round2(sold * rt),
-      costRate: costOf(day, p),
+      costRate: averageCost(opening, carry.cost?.[p.id] ?? p.costRate ?? 0, received, receivedAmount[p.id] || 0),
     });
   }
 
@@ -323,7 +345,7 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
     otherIncome: round2(sum(day.otherIncome, (o) => o.amount)),
     bankWithdrawals: round2(sum(day.bankTxns.filter((t) => t.type === 'withdrawal'), (t) => t.amount)),
     expenses: round2(sum(cashExpenses, (e) => e.amount)),
-    purchases: round2(sum(cashPurchases, (p) => (p.qty || 0) * (p.rate || 0))),
+    purchases: round2(sum(cashPurchases, purchaseAmount)),
     bankDeposits: round2(sum(day.bankTxns.filter((t) => t.type === 'deposit'), (t) => t.amount)),
     expected: 0,
     counted: 0,
@@ -400,14 +422,17 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
       mv({
         bankId: p.bankId,
         kind: 'purchase',
-        description: `Purchase: ${products.get(p.productId)?.name ?? ''} ${p.qty} @ ${p.rate}${p.supplier ? ' · ' + p.supplier : ''}`,
+        description: `Purchase: ${products.get(p.productId)?.name ?? ''} ${p.qty} ${products.get(p.productId)?.unit ?? ''}${p.invoiceNo ? ' · ' + p.invoiceNo : ''}${p.supplier ? ' · ' + p.supplier : ''}`,
         credit: 0,
-        debit: round2((p.qty || 0) * (p.rate || 0)),
+        debit: round2(purchaseAmount(p)),
       });
 
   // ---- Profit
   const expenses = round2(sum(day.expenses, (e) => e.amount));
-  const grossMargin = round2(sum(stock, (s) => s.sold * (s.rate - s.costRate)));
+  // Products whose cost is not known yet are left out of the margin instead of counting as pure profit.
+  const costed = stock.filter((s) => s.costRate > 0);
+  const grossMargin = round2(sum(costed, (s) => s.sold * (s.rate - s.costRate)));
+  const costUnknown = stock.filter((s) => s.costRate <= 0 && s.sold > 0).map((s) => s.productId);
   const stockGainLossValue = round2(sum(stock, (s) => s.variance * s.costRate));
   const otherIncome = round2(sum(day.otherIncome, (o) => o.amount));
 
@@ -427,10 +452,11 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
     creditRecovery: round2(sum(day.creditReceipts, (r) => r.amount)),
     expenses,
     otherIncome,
-    purchasesAmount: round2(sum(day.purchases, (p) => (p.qty || 0) * (p.rate || 0))),
+    purchasesAmount: round2(sum(day.purchases, purchaseAmount)),
     cash: cashFlow,
     bankMoves,
     grossMargin,
+    costUnknown,
     stockGainLossValue,
     netProfit: round2(grossMargin + stockGainLossValue + otherIncome - expenses),
     shortExcess,
@@ -439,10 +465,14 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
 
 export function nextCarry(carry: Carry, day: DayRecord, s: DaySummary): Carry {
   const stock = { ...carry.stock };
-  for (const r of s.stock) stock[r.productId] = r.closing;
+  const cost = { ...carry.cost };
+  for (const r of s.stock) {
+    stock[r.productId] = r.closing;
+    cost[r.productId] = r.costRate;
+  }
   const meters = { ...carry.meters };
   for (const r of day.readings) if (r.closing) meters[r.nozzleId] = r.closing;
-  return { stock, cash: s.cash.closing, meters };
+  return { stock, cost, cash: s.cash.closing, meters };
 }
 
 export interface Ledger {
