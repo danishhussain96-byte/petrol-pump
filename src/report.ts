@@ -74,7 +74,20 @@ export function dayReportHtml(data: AppData, s: DaySummary): string {
     4,
     true,
   );
-  if (s.units.length > 1) b += table(['Dispenser', 'Litres', 'Amount'], s.units.map((x) => [N.unit(x.unitId), x.litres, x.amount]));
+  for (const u of s.unitSales) {
+    b += `<h2>${esc(N.unit(u.unitId))} · ${esc(N.salesman(u.salesmanId))}</h2>`;
+    b += table(
+      ['Product', 'Litres', 'Test', 'Rate', 'Amount'],
+      [...u.byProduct.map((x) => [N.product(x.productId), x.litres, x.testLitres, x.rate, x.amount]), ['Total sale', u.litres, '', '', u.fuelAmount]],
+      1,
+      true,
+    );
+    b += table(
+      ['Cash', 'Online / UPI', 'POS', 'Credit', 'Received', 'Short / excess'],
+      [[u.cash, u.online, u.pos, u.credit, u.received, diff(u.diff)]],
+      0,
+    );
+  }
   b += '<h2>Salesman settlement</h2>';
   b += table(
     ['Salesman', 'Litres', 'Sale', 'Credit', 'Card', 'Digital', 'Cash due', 'Received', 'Short/Excess'],

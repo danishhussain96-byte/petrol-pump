@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, BackHandler, Pressable, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Customers } from './src/screens/Customers';
 import { DayEntry } from './src/screens/DayEntry';
 import { Home } from './src/screens/Home';
 import { Ledgers } from './src/screens/Ledgers';
@@ -11,13 +12,14 @@ import { StoreProvider, useStore } from './src/store';
 import { C, Header, PortalHost, s } from './src/ui';
 import { todayStr } from './src/utils';
 
-type Tab = 'home' | 'day' | 'reports' | 'ledgers' | 'setup';
+type Tab = 'home' | 'day' | 'credit' | 'reports' | 'ledgers' | 'setup';
 
 const TABS: { key: Tab; icon: string; label: string }[] = [
   { key: 'home', icon: '🏠', label: 'Home' },
   { key: 'day', icon: '📝', label: 'Daily' },
+  { key: 'credit', icon: '📒', label: 'Credit' },
+  { key: 'ledgers', icon: '🏦', label: 'Bank' },
   { key: 'reports', icon: '📊', label: 'Reports' },
-  { key: 'ledgers', icon: '🏦', label: 'Ledgers' },
   { key: 'setup', icon: '⚙️', label: 'Setup' },
 ];
 
@@ -25,7 +27,8 @@ const TITLES: Record<Tab, string> = {
   home: '',
   day: 'Daily Sales Entry',
   reports: 'Reports',
-  ledgers: 'Bank & Credit Ledgers',
+  credit: 'Credit Customers',
+  ledgers: 'Bank',
   setup: 'Setup',
 };
 
@@ -68,6 +71,7 @@ function Main() {
         {tab === 'home' && <Home openDay={openDay} go={setTab} />}
         {tab === 'day' && <DayEntry date={date} setDate={setDate} />}
         {tab === 'reports' && <Reports openDay={openDay} />}
+        {tab === 'credit' && <Customers />}
         {tab === 'ledgers' && <Ledgers />}
         {tab === 'setup' && <Setup />}
       </View>

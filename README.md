@@ -9,6 +9,8 @@ stored on the phone, and the app works without internet.
 
 | Area | What it does |
 |---|---|
+| **Dispenser page** | Daily screen has one page per dispenser, like the sale sheet: its 4 nozzles (tap Petrol / Diesel / Power per nozzle), opening / closing / test, sale per product (litres × rate), money received as **Cash, Online / UPI, POS and Credit**, short / excess, credit entries (per nozzle) and cash still to deposit. Everything else is under **🏪 Station** |
+| **Credit customers** | Own tab. Add customers (also quickly while entering credit) with mobile, vehicles, **credit days** and limit. After each credit sale the app offers to **SMS / WhatsApp** the customer: today's credit, total due, cheque in clearing, balance to pay, days used and days left. **Cheques** stay "in clearing" and reduce the balance only when you mark them cleared (or bounced). Day-by-day account |
 | **Dispensers & nozzles** | Starts with 3 dispensing units × 4 nozzles (2 petrol + 2 diesel each), all editable. Each dispenser has its **own bank account** for its cash, and card (POS) / digital accounts (default: the same bank) |
 | **Dispenser cash → bank** | Cash from salesmen is split by their sales on each dispenser. Each dispenser shows collected, deposited and **still to deposit** (carried day to day), with one-tap deposit. Depositing one dispenser's cash into another's bank is marked as a **cross deposit**; **transfers** between your own accounts post to both banks |
 | **Meter readings** | Grouped by dispenser. Opening and closing reading for each nozzle (opening carries forward from the previous day), test/return litres, one salesman for a whole dispenser or per nozzle, and per-day rate overrides |

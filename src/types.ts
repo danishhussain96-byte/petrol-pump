@@ -19,6 +19,10 @@ export interface Settings {
   digitalBankId?: string;
   /** Optional 4–6 digit PIN to lock the app. Empty = no lock. */
   pin: string;
+  /** Notes / coins used in the cash count, largest first. */
+  denominations?: number[];
+  /** After a credit sale, offer to text the customer their balance. */
+  smsAfterCredit?: boolean;
 }
 
 export interface Product {
@@ -85,16 +89,44 @@ export interface BankAccount {
 export interface Customer {
   id: string;
   name: string;
+  /** Mobile number for SMS / WhatsApp. */
   phone: string;
+  /** One or more vehicle numbers, comma separated. */
   vehicleNo: string;
   /** Amount receivable before the first recorded day. */
   openingBalance: number;
+  /** Date the opening balance dates from (YYYY-MM-DD), for credit-day counting. */
+  openingDate?: string;
   creditLimit: number;
+  /** Days allowed to pay; 0 = no limit. */
+  creditDays?: number;
   active: boolean;
+}
+
+export type ChequeStatus = 'pending' | 'cleared' | 'bounced';
+
+/** Cheque received from a credit customer. It reduces the customer's balance only once cleared. */
+export interface Cheque {
+  id: string;
+  customerId: string;
+  amount: number;
+  chequeNo: string;
+  /** Bank the cheque is drawn on. */
+  drawnOn: string;
+  chequeDate: string;
+  receivedDate: string;
+  status: ChequeStatus;
+  /** Date it cleared / bounced. */
+  statusDate?: string;
+  /** Own account it was deposited into (gets the credit when cleared). */
+  depositBankId?: string;
+  note: string;
 }
 
 export interface NozzleReading {
   nozzleId: string;
+  /** Product on this nozzle that day (snapshot, so changing a nozzle's product later doesn't rewrite history). */
+  productId?: string;
   salesmanId?: string;
   opening: number;
   closing: number;
@@ -146,6 +178,9 @@ export interface CreditSale {
   id: string;
   customerId: string;
   salesmanId?: string;
+  /** Dispenser / nozzle the fuel was given from. */
+  unitId?: string;
+  nozzleId?: string;
   productId?: string;
   qty: number;
   amount: number;
@@ -203,6 +238,14 @@ export interface OtherIncome {
   note: string;
 }
 
+/** Money handed over for one dispenser's sale (credit comes from the credit entries). */
+export interface UnitSettlement {
+  cash: number;
+  /** Online / UPI / bank transfer. */
+  online: number;
+  pos: number;
+}
+
 export interface DayRecord {
   date: string; // YYYY-MM-DD
   /** Sale price snapshot for the day, keyed by productId. */
@@ -215,6 +258,8 @@ export interface DayRecord {
   /** Physical dip / counted closing stock keyed by productId (optional). */
   dips: Record<string, number | undefined>;
   settlements: SalesmanSettlement[];
+  /** Receipts per dispenser, keyed by unitId. */
+  unitSettlements?: Record<string, UnitSettlement>;
   creditSales: CreditSale[];
   creditReceipts: CreditReceipt[];
   expenses: Expense[];
@@ -250,4 +295,5 @@ export interface AppData {
   customers: Customer[];
   days: Record<string, DayRecord>;
   statements: SavedStatement[];
+  cheques: Cheque[];
 }

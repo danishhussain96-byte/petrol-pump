@@ -47,7 +47,7 @@ export function defaultData(): AppData {
     products: [
       { id: 'petrol', name: 'Petrol', unit: 'L', isFuel: true, rate: 0, costRate: 0, openingStock: 0, capacity: 0, minStock: 0, active: true },
       { id: 'diesel', name: 'Diesel (HSD)', unit: 'L', isFuel: true, rate: 0, costRate: 0, openingStock: 0, capacity: 0, minStock: 0, active: true },
-      { id: 'hioctane', name: 'Hi-Octane', unit: 'L', isFuel: true, rate: 0, costRate: 0, openingStock: 0, capacity: 0, minStock: 0, active: false },
+      { id: 'hioctane', name: 'Power (premium)', unit: 'L', isFuel: true, rate: 0, costRate: 0, openingStock: 0, capacity: 0, minStock: 0, active: true },
       { id: 'mobiloil', name: 'Engine Oil', unit: 'pcs', isFuel: false, rate: 0, costRate: 0, openingStock: 0, capacity: 0, minStock: 0, active: true },
     ],
     ...defaultLayout(),
@@ -56,6 +56,7 @@ export function defaultData(): AppData {
     customers: [],
     days: {},
     statements: [],
+    cheques: [],
   };
 }
 
@@ -69,7 +70,7 @@ export function newDay(data: AppData, date: string, carry: Carry): DayRecord {
     .filter((n) => n.active)
     .map((n) => {
       const opening = carry.meters[n.id] ?? n.openingReading ?? 0;
-      return { nozzleId: n.id, opening, closing: 0, testLitres: 0 };
+      return { nozzleId: n.id, productId: n.productId, opening, closing: 0, testLitres: 0 };
     });
   return day;
 }
@@ -105,5 +106,6 @@ export function normalize(raw: unknown): AppData {
     customers: Array.isArray(d.customers) ? d.customers : [],
     days,
     statements: Array.isArray(d.statements) ? d.statements : [],
+    cheques: Array.isArray(d.cheques) ? d.cheques : [],
   };
 }

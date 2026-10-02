@@ -6,7 +6,7 @@ import { useStore } from '../store';
 import { Btn, C, Card, Empty, ListItem, Muted, Row, Screen, Stat, diffColor, diffText } from '../ui';
 import { addDays, num, prettyDate, todayStr } from '../utils';
 
-export function Home({ openDay, go }: { openDay: (d: string) => void; go: (tab: 'reports' | 'ledgers' | 'setup') => void }) {
+export function Home({ openDay, go }: { openDay: (d: string) => void; go: (tab: 'reports' | 'ledgers' | 'setup' | 'credit') => void }) {
   const { data, ledger, getDay } = useStore();
   const L = useLookups();
   const today = todayStr();
@@ -52,11 +52,12 @@ export function Home({ openDay, go }: { openDay: (d: string) => void; go: (tab: 
         {lowStock.length ? <Text style={{ color: C.red, marginTop: 4 }}>⚠ Low stock: {lowStock.map((r) => L.productName(r.productId)).join(', ')}</Text> : null}
       </Card>
 
-      <Card title="Balances" right={<Btn title="Ledgers" small kind="secondary" onPress={() => go('ledgers')} />}>
+      <Card title="Balances" right={<Btn title="Bank" small kind="secondary" onPress={() => go('ledgers')} />}>
         {data.banks.map((b) => (
           <Row key={b.id} label={`🏦 ${b.name}`} value={`${L.cur} ${num(bankBalance(data, ledger, b.id))}`} />
         ))}
         <Row label="📒 Credit receivable" value={`${L.cur} ${num(receivable)}`} />
+        <Btn title="Credit customers" small kind="secondary" onPress={() => go('credit')} style={{ alignSelf: 'flex-start', marginTop: 6 }} />
       </Card>
 
       <Card title="Recent days" right={<Btn title="Reports" small kind="secondary" onPress={() => go('reports')} />}>

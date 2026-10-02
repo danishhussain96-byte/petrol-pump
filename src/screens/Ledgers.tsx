@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Text, View } from 'react-native';
-import { bankStatement, customerLedger } from '../calc';
+import { bankStatement } from '../calc';
 import { useLookups } from '../hooks';
 import { shareHtml, statementHtml } from '../report';
 import { useStore } from '../store';
@@ -9,7 +9,7 @@ import { isValidDate, monthStart, num, prettyDate, round2, todayStr } from '../u
 import { BankImport } from './BankImport';
 import { BankTxnForm, txnTitle } from './BankTxnForm';
 
-type Tab = 'bank' | 'upload' | 'customers';
+type Tab = 'bank' | 'upload';
 
 export function Ledgers() {
   const [tab, setTab] = useState<Tab>('bank');
@@ -19,12 +19,11 @@ export function Ledgers() {
         items={[
           { key: 'bank', label: '🏦 Bank statement' },
           { key: 'upload', label: '📄 Upload statement' },
-          { key: 'customers', label: '📒 Credit customers' },
         ]}
         value={tab}
         onChange={setTab}
       />
-      {tab === 'bank' ? <BankStatementView /> : tab === 'upload' ? <BankImport /> : <CustomersView />}
+      {tab === 'bank' ? <BankStatementView /> : <BankImport />}
     </View>
   );
 }
@@ -111,58 +110,5 @@ function ManualBankEntry({ bankId }: { bankId?: string }) {
         }}
       />
     </Card>
-  );
-}
-
-function CustomersView() {
-  const { data } = useStore();
-  const L = useLookups();
-  const [sel, setSel] = useState<string>();
-  const balances = useMemo(() => data.customers.map((c) => ({ c, bal: customerLedger(data, c.id).balance })), [data]);
-  const total = balances.reduce((a, b) => a + b.bal, 0);
-  if (sel) {
-    const c = data.customers.find((x) => x.id === sel);
-    const led = customerLedger(data, sel);
-    return (
-      <Screen>
-        <Btn title="‹ All customers" kind="ghost" onPress={() => setSel(undefined)} style={{ alignSelf: 'flex-start' }} />
-        <Card title={c?.name ?? ''}>
-          <Row label="Opening balance" value={num(c?.openingBalance ?? 0)} />
-          {led.rows.length === 0 ? <Empty text="No transactions" /> : null}
-          {led.rows.map((r, i) => (
-            <View key={i} style={{ paddingVertical: 6, borderBottomWidth: 1, borderColor: '#EEF2F6' }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ flex: 1, color: C.text }}>{r.description}</Text>
-                <Text style={{ color: r.debit ? C.red : C.green, fontWeight: '600' }}>{r.debit ? `+${num(r.debit)}` : `−${num(r.credit)}`}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Muted>{r.date}</Muted>
-                <Muted>Bal {num(r.balance)}</Muted>
-              </View>
-            </View>
-          ))}
-          <Divider />
-          <Row label="Balance receivable" value={`${L.cur} ${num(led.balance)}`} bold />
-          {c && c.creditLimit > 0 && led.balance > c.creditLimit ? <Text style={{ color: C.red }}>⚠ Over credit limit ({num(c.creditLimit)})</Text> : null}
-        </Card>
-      </Screen>
-    );
-  }
-  return (
-    <Screen>
-      <Card title="Credit customers" right={<Text style={{ fontWeight: '700' }}>{L.cur} {num(total)}</Text>}>
-        {balances.length === 0 ? <Empty text="Add customers in Setup → Customers" /> : null}
-        {balances.map(({ c, bal }) => (
-          <ListItem
-            key={c.id}
-            title={c.name}
-            sub={[c.phone, c.vehicleNo, c.creditLimit > 0 && bal > c.creditLimit ? '⚠ over limit' : ''].filter(Boolean).join(' · ')}
-            right={num(bal)}
-            onPress={() => setSel(c.id)}
-          />
-        ))}
-      </Card>
-      <Muted>Positive balance = customer owes you.</Muted>
-    </Screen>
   );
 }

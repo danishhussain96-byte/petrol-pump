@@ -6,6 +6,9 @@ import { shareDayReport } from '../report';
 import { useStore } from '../store';
 import type { DayRecord, NozzleReading, SalesmanSettlement } from '../types';
 import { BankTxnForm, txnSign, txnTitle, type TxnPrefill } from './BankTxnForm';
+import { CreditForm } from './CreditForm';
+import { DispenserDay } from './DispenserDay';
+import { ReceivePayment } from './ReceivePayment';
 import {
   Btn,
   C,
@@ -30,17 +33,20 @@ import { addDays, isValidDate, num, prettyDate, round2, todayStr, uid } from '..
 
 type Section = 'meters' | 'items' | 'stock' | 'salesmen' | 'credit' | 'expenses' | 'bank' | 'cash' | 'summary';
 
+/** Station-wide sections (dispensers have their own pages). */
 const SECTIONS: { key: Section; label: string }[] = [
-  { key: 'meters', label: '⛽ Meters' },
-  { key: 'salesmen', label: '👤 Salesmen' },
-  { key: 'items', label: '🛢 Lube/Items' },
-  { key: 'stock', label: '📦 Stock & Dip' },
-  { key: 'credit', label: '📒 Credit' },
-  { key: 'expenses', label: '💸 Expenses' },
-  { key: 'bank', label: '🏦 Bank' },
-  { key: 'cash', label: '💵 Cash' },
   { key: 'summary', label: '📊 Summary' },
+  { key: 'cash', label: '💵 Cash' },
+  { key: 'bank', label: '🏦 Bank' },
+  { key: 'credit', label: '📒 Credit & recovery' },
+  { key: 'expenses', label: '💸 Expenses' },
+  { key: 'stock', label: '📦 Stock & Dip' },
+  { key: 'items', label: '🛢 Lube/Items' },
+  { key: 'salesmen', label: '👤 Salesmen' },
+  { key: 'meters', label: '⛽ All meters' },
 ];
+
+const STATION = '__station__';
 
 export interface SectionProps {
   day: DayRecord;
@@ -51,7 +57,9 @@ export interface SectionProps {
 
 export function DayEntry({ date, setDate }: { date: string; setDate: (d: string) => void }) {
   const { data, ledger, getDay, updateDay } = useStore();
-  const [section, setSection] = useState<Section>('meters');
+  const unitTabs = data.units.filter((u) => u.active);
+  const [tab, setTab] = useState<string>(unitTabs[0]?.id ?? STATION);
+  const [section, setSection] = useState<Section>('summary');
   const [editDate, setEditDate] = useState<string | null>(null);
   const day = getDay(date);
   const sum = useMemo(() => computeDay(data, day, carryFor(data, ledger, date)), [data, ledger, day, date]);
@@ -94,8 +102,30 @@ export function DayEntry({ date, setDate }: { date: string; setDate: (d: string)
           </HStack>
         </View>
       ) : null}
-      <ChipBar items={SECTIONS} value={section} onChange={setSection} />
+      <ChipBar
+        items={[
+          ...unitTabs.map((u) => {
+            const sheet = sum.unitSales.find((x) => x.unitId === u.id);
+            const flag = sheet && sheet.fuelAmount > 0 && Math.abs(sheet.diff) >= 1 ? ' ⚠' : sheet && sheet.fuelAmount > 0 ? ' ✓' : '';
+            return { key: u.id, label: `⛽ ${u.name}${flag}` };
+          }),
+          { key: STATION, label: '🏪 Station' },
+        ]}
+        value={unitTabs.some((u) => u.id === tab) ? tab : STATION}
+        onChange={setTab}
+      />
+      {tab === STATION || !unitTabs.some((u) => u.id === tab) ? <ChipBar items={SECTIONS} value={section} onChange={setSection} /> : null}
       <Screen>
+        {unitTabs.some((u) => u.id === tab) ? <DispenserDay key={tab} unitId={tab} {...props} /> : null}
+        {(tab === STATION || !unitTabs.some((u) => u.id === tab)) && <StationSection section={section} props={props} />}
+      </Screen>
+    </View>
+  );
+}
+
+function StationSection({ section, props }: { section: Section; props: SectionProps }) {
+  return (
+    <>
         {section === 'meters' && <Meters {...props} />}
         {section === 'items' && <Items {...props} />}
         {section === 'stock' && <Stock {...props} />}
@@ -105,8 +135,7 @@ export function DayEntry({ date, setDate }: { date: string; setDate: (d: string)
         {section === 'bank' && <Bank {...props} />}
         {section === 'cash' && <Cash {...props} />}
         {section === 'summary' && <Summary {...props} />}
-      </Screen>
-    </View>
+    </>
   );
 }
 
@@ -398,7 +427,36 @@ interface PayBucket {
   units: string[];
 }
 
-function Salesmen({ day, sum, set }: SectionProps) {
+function Salesmen(props: SectionProps) {
+  const { day, sum } = props;
+  const L = useLookups();
+  const legacyUsed = day.settlements.some((s) => s.cashReceived || s.cardSales || s.digitalSales || Object.values(s.payments || {}).some(Boolean));
+  const [old, setOld] = useState(legacyUsed);
+  return (
+    <>
+      <Muted style={{ marginBottom: 8 }}>Money is entered on each dispenser's page. This is each salesman's total for the day.</Muted>
+      {sum.salesmen.length === 0 ? <Empty text="No sales yet" /> : null}
+      {sum.salesmen.map((r) => (
+        <Card key={r.salesmanId || 'counter'} title={L.salesmanName(r.salesmanId)} right={<Text style={{ color: diffColor(r.diff), fontWeight: '700' }}>{diffText(r.diff, L.cur)}</Text>}>
+          <Row small label="Sale" value={`${num(r.litres)} L · ${L.cur} ${num(r.saleAmount)}`} />
+          <Row small label="Cash" value={num(r.cashReceived)} />
+          <Row small label="Online / UPI" value={num(r.digital)} />
+          <Row small label="POS" value={num(r.card)} />
+          <Row small label="Credit" value={num(r.credit)} />
+        </Card>
+      ))}
+      <Btn
+        title={old ? 'Hide per-salesman entry' : 'Enter money per salesman instead (old way)'}
+        kind="ghost"
+        small
+        onPress={() => setOld(!old)}
+      />
+      {old ? <SalesmenEntry {...props} /> : null}
+    </>
+  );
+}
+
+function SalesmenEntry({ day, sum, set }: SectionProps) {
   const L = useLookups();
   const { data } = useStore();
   const ids = [...new Set([...sum.salesmen.map((r) => r.salesmanId), ...day.settlements.map((s) => s.salesmanId)])];
@@ -510,64 +568,29 @@ function Salesmen({ day, sum, set }: SectionProps) {
 
 function Credit({ day, set }: SectionProps) {
   const L = useLookups();
-  const [cs, setCs] = useState({ customerId: undefined as string | undefined, salesmanId: undefined as string | undefined, productId: undefined as string | undefined, qty: 0, amount: 0, vehicleNo: '', slipNo: '' });
-  const [rc, setRc] = useState({ customerId: undefined as string | undefined, amount: 0, mode: 'cash' as 'cash' | 'bank', bankId: undefined as string | undefined, note: '' });
-  const rate = (pid?: string) => {
-    const p = pid ? L.product.get(pid) : undefined;
-    return p ? rateOf(day, p) : 0;
-  };
-  const addSale = () => {
-    if (!cs.customerId || !cs.amount) return Alert.alert('Missing', 'Select customer and enter amount.');
-    const { customerId } = cs;
-    set((d) => ({ ...d, creditSales: [...d.creditSales, { id: uid(), ...cs, customerId }] }));
-    setCs({ ...cs, qty: 0, amount: 0, vehicleNo: '', slipNo: '' });
-  };
-  const addReceipt = () => {
-    if (!rc.customerId || !rc.amount) return Alert.alert('Missing', 'Select customer and enter amount.');
-    if (rc.mode === 'bank' && !rc.bankId) return Alert.alert('Missing', 'Select bank account.');
-    const { customerId } = rc;
-    set((d) => ({ ...d, creditReceipts: [...d.creditReceipts, { id: uid(), ...rc, customerId }] }));
-    setRc({ ...rc, amount: 0, note: '' });
-  };
+  const { data, update } = useStore();
+  const pending = (data.cheques || []).filter((c) => c.status === 'pending');
   return (
     <>
-      <Card title="Credit sale (udhaar)">
-        <Select label="Customer" value={cs.customerId} options={L.opt.customers} onChange={(v) => setCs({ ...cs, customerId: v, vehicleNo: (v && L.customer.get(v)?.vehicleNo) || cs.vehicleNo })} />
-        <HStack>
-          <Select label="Product" value={cs.productId} options={L.opt.products} allowNone="— Any —" onChange={(v) => setCs({ ...cs, productId: v, amount: round2(cs.qty * rate(v)) })} />
-          <NumInput label="Qty" value={cs.qty} onChange={(v) => setCs({ ...cs, qty: v ?? 0, amount: cs.productId ? round2((v ?? 0) * rate(cs.productId)) : cs.amount })} />
-        </HStack>
-        <HStack>
-          <NumInput label="Amount" value={cs.amount} onChange={(v) => setCs({ ...cs, amount: v ?? 0 })} />
-          <Select label="Salesman" value={cs.salesmanId} options={L.opt.salesmen} allowNone="Counter" onChange={(v) => setCs({ ...cs, salesmanId: v })} />
-        </HStack>
-        <HStack>
-          <Field label="Vehicle #" value={cs.vehicleNo} onChange={(t) => setCs({ ...cs, vehicleNo: t })} />
-          <Field label="Slip #" value={cs.slipNo} onChange={(t) => setCs({ ...cs, slipNo: t })} />
-        </HStack>
-        <Btn title="Add credit sale" onPress={addSale} style={{ marginTop: 10 }} />
-      </Card>
-      <Card title="Credit sales today">
+      <Card title="Credit given today">
+        <Muted style={{ marginBottom: 6 }}>Fuel credit is best entered on the dispenser page. Use this for lube / other credit.</Muted>
         {day.creditSales.length === 0 ? <Empty text="None" /> : null}
         {day.creditSales.map((c) => (
           <ListItem
             key={c.id}
-            title={L.customerName(c.customerId)}
-            sub={[c.productId && `${L.productName(c.productId)} ${num(c.qty)}`, c.vehicleNo, L.salesmanName(c.salesmanId)].filter(Boolean).join(' · ')}
-            right={`${L.cur} ${num(c.amount)}`}
+            title={`${L.customerName(c.customerId)} · ${L.cur} ${num(c.amount)}`}
+            sub={[c.unitId && L.unitName(c.unitId), c.nozzleId && L.nozzleName(c.nozzleId), c.productId && `${L.productName(c.productId)} ${num(c.qty)}`, c.vehicleNo]
+              .filter(Boolean)
+              .join(' · ')}
             onDelete={() => set((d) => ({ ...d, creditSales: d.creditSales.filter((x) => x.id !== c.id) }))}
           />
         ))}
       </Card>
-      <Card title="Recovery (payment received from customer)">
-        <Select label="Customer" value={rc.customerId} options={L.opt.customers} onChange={(v) => setRc({ ...rc, customerId: v })} />
-        <HStack>
-          <NumInput label="Amount" value={rc.amount} onChange={(v) => setRc({ ...rc, amount: v ?? 0 })} />
-          <Select label="Received in" value={rc.mode} options={[{ value: 'cash', label: 'Cash' }, { value: 'bank', label: 'Bank / cheque' }]} onChange={(v) => setRc({ ...rc, mode: (v as 'cash' | 'bank') || 'cash' })} />
-        </HStack>
-        {rc.mode === 'bank' ? <Select label="Bank" value={rc.bankId} options={L.opt.banks} onChange={(v) => setRc({ ...rc, bankId: v })} /> : null}
-        <Field label="Note / cheque #" value={rc.note} onChange={(t) => setRc({ ...rc, note: t })} />
-        <Btn title="Add recovery" onPress={addReceipt} style={{ marginTop: 10 }} />
+      <Card title="Add credit (not from a dispenser)">
+        <CreditForm day={day} set={set} />
+      </Card>
+      <Card title="Payment received from customer">
+        <ReceivePayment date={day.date} />
       </Card>
       <Card title="Recoveries today">
         {day.creditReceipts.length === 0 ? <Empty text="None" /> : null}
@@ -581,6 +604,32 @@ function Credit({ day, set }: SectionProps) {
           />
         ))}
       </Card>
+      {pending.length ? (
+        <Card title={`Cheques in clearing (${pending.length})`}>
+          {pending.map((c) => (
+            <ListItem
+              key={c.id}
+              title={`${L.customerName(c.customerId)} · #${c.chequeNo}`}
+              sub={`Received ${c.receivedDate}${c.depositBankId ? ' · in ' + L.bankName(c.depositBankId) : ''}`}
+              right={num(c.amount)}
+              onPress={() =>
+                Alert.alert(`Cheque #${c.chequeNo}`, `${L.customerName(c.customerId)} · ${L.cur} ${num(c.amount)}`, [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Bounced', style: 'destructive', onPress: () => update((d) => ({ ...d, cheques: d.cheques.map((x) => (x.id === c.id ? { ...x, status: 'bounced', statusDate: day.date } : x)) })) },
+                  {
+                    text: `Cleared on ${day.date}`,
+                    onPress: () => {
+                      update((d) => ({ ...d, cheques: d.cheques.map((x) => (x.id === c.id ? { ...x, status: 'cleared', statusDate: day.date } : x)) }));
+                      set((d) => d);
+                    },
+                  },
+                ])
+              }
+            />
+          ))}
+          <Muted style={{ marginTop: 4 }}>Tap a cheque to mark it cleared (on this day) or bounced.</Muted>
+        </Card>
+      ) : null}
     </>
   );
 }
@@ -725,6 +774,7 @@ function Bank({ day, sum, set }: SectionProps) {
 
 function Cash({ day, sum, set }: SectionProps) {
   const L = useLookups();
+  const { data } = useStore();
   const c = sum.cash;
   return (
     <>
@@ -747,7 +797,7 @@ function Cash({ day, sum, set }: SectionProps) {
         ) : null}
       </Card>
       <Card title="Cash count (denominations)" right={<Btn title="Clear" small kind="secondary" onPress={() => set((d) => ({ ...d, cashCount: {}, looseCash: 0 }))} />}>
-        {DENOMINATIONS.map((den) => {
+        {(data.settings.denominations?.length ? data.settings.denominations : DENOMINATIONS).map((den) => {
           const n = day.cashCount[String(den)] || 0;
           return (
             <HStack key={den} style={{ alignItems: 'center', marginBottom: 4 }}>

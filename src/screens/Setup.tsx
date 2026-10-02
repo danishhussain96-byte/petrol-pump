@@ -1,8 +1,9 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, Switch, Text, View } from 'react-native';
+import { DENOMINATIONS } from '../calc';
 import { useLookups } from '../hooks';
 import { useStore } from '../store';
 import { makeUnit } from '../defaults';
@@ -370,12 +371,37 @@ function Customers() {
           </HStack>
           <HStack>
             <NumInput label="Opening balance (owes)" value={ed.openingBalance} onChange={(v) => setEd({ ...ed, openingBalance: v ?? 0 })} />
+            <Field label="…since (YYYY-MM-DD)" value={ed.openingDate ?? ''} onChange={(t) => setEd({ ...ed, openingDate: t })} />
+          </HStack>
+          <HStack>
+            <NumInput label="Credit days (0 = none)" value={ed.creditDays ?? 0} onChange={(v) => setEd({ ...ed, creditDays: v ?? 0 })} />
             <NumInput label="Credit limit" value={ed.creditLimit} onChange={(v) => setEd({ ...ed, creditLimit: v ?? 0 })} />
           </HStack>
           <ActiveSwitch value={ed.active} onChange={(v) => setEd({ ...ed, active: v })} />
         </EditModal>
       ) : null}
     </>
+  );
+}
+
+/** Keeps the typed text (e.g. a trailing comma) while saving the parsed list. */
+function DenominationsField({ value, onChange }: { value: number[]; onChange: (list: number[]) => void }) {
+  const [text, setText] = useState(value.join(', '));
+  useEffect(() => {
+    const parsed = text.split(/[,\s]+/).map(Number).filter((n) => n > 0 && isFinite(n));
+    if (parsed.join(',') !== value.join(',')) setText(value.join(', '));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.join(',')]);
+  return (
+    <Field
+      label="Notes / coins, largest first (comma separated)"
+      value={text}
+      onChange={(t) => {
+        setText(t);
+        const list = t.split(/[,\s]+/).map(Number).filter((n) => n > 0 && isFinite(n));
+        if (list.length) onChange(list);
+      }}
+    />
   );
 }
 
@@ -428,6 +454,19 @@ function SettingsView() {
         <Muted>Default accounts. A dispenser with its own bank account (Setup → Dispensers) uses that instead.</Muted>
         <Select label="Card (POS) sales go to" value={st.cardBankId} options={L.opt.banks} allowNone="— Don't post to bank —" onChange={(v) => set({ cardBankId: v })} />
         <Select label="Digital / online sales go to" value={st.digitalBankId} options={L.opt.banks} allowNone="— Don't post to bank —" onChange={(v) => set({ digitalBankId: v })} />
+      </Card>
+      <Card title="Credit SMS">
+        <HStack style={{ alignItems: 'center' }}>
+          <Switch value={st.smsAfterCredit !== false} onValueChange={(v) => set({ smsAfterCredit: v })} />
+          <Text style={{ color: C.text, flex: 1 }}>After each credit sale, offer to SMS / WhatsApp the customer their balance and credit days</Text>
+        </HStack>
+      </Card>
+      <Card title="Cash count notes">
+        <DenominationsField value={st.denominations?.length ? st.denominations : DENOMINATIONS} onChange={(list) => set({ denominations: list })} />
+        <HStack style={{ marginTop: 8 }}>
+          <Btn title="India ₹" small kind="secondary" onPress={() => set({ denominations: [500, 200, 100, 50, 20, 10, 5, 2, 1], currency: st.currency === 'Rs' ? '₹' : st.currency })} />
+          <Btn title="Pakistan Rs" small kind="secondary" onPress={() => set({ denominations: [5000, 1000, 500, 100, 50, 20, 10, 5, 2, 1] })} />
+        </HStack>
       </Card>
       <Card title="App lock">
         <Field label="PIN (leave empty for no lock)" value={st.pin} secure keyboardType="number-pad" onChange={(t) => set({ pin: t.replace(/\D/g, '').slice(0, 6) })} />
