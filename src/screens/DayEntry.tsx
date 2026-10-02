@@ -647,7 +647,7 @@ function Expenses({ day, set }: SectionProps) {
 
 // ---------------- Bank ----------------
 
-const TXN_TYPES: { value: BankTxnType; label: string; sub: string }[] = [
+export const TXN_TYPES: { value: BankTxnType; label: string; sub: string }[] = [
   { value: 'deposit', label: 'Cash deposit', sub: 'Cash in hand → bank' },
   { value: 'withdrawal', label: 'Cash withdrawal', sub: 'Bank → cash in hand' },
   { value: 'credit', label: 'Amount received (transfer in)', sub: 'Bank balance increases' },

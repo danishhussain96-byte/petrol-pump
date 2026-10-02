@@ -1,3 +1,5 @@
+import type { StatementLine } from './statement';
+
 // Core data model for the Petrol Pump Manager app.
 // All money values are in the station currency (default "Rs"), quantities in litres for fuel
 // or units (pcs / cans) for lubricants and other items.
@@ -219,6 +221,17 @@ export interface DayRecord {
   locked: boolean;
 }
 
+/** A bank statement file uploaded by the user, kept for comparison with the app's records. */
+export interface SavedStatement {
+  id: string;
+  bankId: string;
+  fileName: string;
+  importedAt: string; // ISO time
+  lines: StatementLine[];
+  openingBalance?: number;
+  warnings: string[];
+}
+
 export interface AppData {
   version: 1;
   settings: Settings;
@@ -229,4 +242,5 @@ export interface AppData {
   banks: BankAccount[];
   customers: Customer[];
   days: Record<string, DayRecord>;
+  statements: SavedStatement[];
 }

@@ -5,9 +5,12 @@ import { useLookups } from '../hooks';
 import { shareHtml, statementHtml } from '../report';
 import { useStore } from '../store';
 import { Btn, C, Card, ChipBar, Divider, Empty, Field, HStack, ListItem, Muted, NumInput, Row, Screen, Select, diffColor } from '../ui';
-import { isValidDate, monthStart, num, round2, todayStr } from '../utils';
+import { isValidDate, monthStart, num, prettyDate, round2, todayStr, uid } from '../utils';
+import type { BankTxnType } from '../types';
+import { BankImport } from './BankImport';
+import { TXN_TYPES } from './DayEntry';
 
-type Tab = 'bank' | 'customers';
+type Tab = 'bank' | 'upload' | 'customers';
 
 export function Ledgers() {
   const [tab, setTab] = useState<Tab>('bank');
@@ -16,12 +19,13 @@ export function Ledgers() {
       <ChipBar
         items={[
           { key: 'bank', label: '🏦 Bank statement' },
+          { key: 'upload', label: '📄 Upload statement' },
           { key: 'customers', label: '📒 Credit customers' },
         ]}
         value={tab}
         onChange={setTab}
       />
-      {tab === 'bank' ? <BankStatementView /> : <CustomersView />}
+      {tab === 'bank' ? <BankStatementView /> : tab === 'upload' ? <BankImport /> : <CustomersView />}
     </View>
   );
 }
@@ -69,8 +73,9 @@ function BankStatementView() {
             <Row label="Total debits (out)" value={num(st.totalDebit)} color={C.red} />
             <Row label="Closing balance" value={`${L.cur} ${num(st.closing)}`} bold />
           </Card>
+          <ManualBankEntry bankId={bankId} />
           <Card title="Reconcile with bank statement">
-            <Muted>Enter the closing balance shown on your actual bank statement for {to}.</Muted>
+            <Muted>Enter the closing balance shown on your actual bank statement for {to}, or upload the statement file in the "Upload statement" tab.</Muted>
             <NumInput label="Balance as per bank" value={actual} allowEmpty onChange={setActual} />
             {recon !== undefined ? (
               <Row
@@ -85,6 +90,37 @@ function BankStatementView() {
         </>
       ) : null}
     </Screen>
+  );
+}
+
+/** Type a bank entry (e.g. a cash deposit) for any date, without opening that day. */
+function ManualBankEntry({ bankId }: { bankId?: string }) {
+  const { data, updateDay } = useStore();
+  const L = useLookups();
+  const blank = { date: todayStr(), type: 'deposit' as BankTxnType, amount: 0, ref: '', note: '' };
+  const [f, setF] = useState(blank);
+  const add = () => {
+    if (!bankId) return;
+    if (!isValidDate(f.date)) return Alert.alert('Invalid date', 'Use format YYYY-MM-DD');
+    if (!f.amount) return Alert.alert('Missing', 'Enter the amount.');
+    if (data.days[f.date]?.locked) return Alert.alert('Day is locked', `Unlock ${prettyDate(f.date)} in Daily → Summary first.`);
+    updateDay(f.date, (d) => ({ ...d, bankTxns: [...d.bankTxns, { id: uid(), bankId, type: f.type, amount: f.amount, ref: f.ref, note: f.note }] }));
+    Alert.alert('Added', `${TXN_TYPES.find((t) => t.value === f.type)?.label} of ${L.cur} ${num(f.amount)} on ${prettyDate(f.date)}.`);
+    setF({ ...blank, date: f.date, type: f.type });
+  };
+  return (
+    <Card title="✍️ Add bank entry">
+      <HStack>
+        <Field label="Date (YYYY-MM-DD)" value={f.date} onChange={(t) => setF({ ...f, date: t })} />
+        <NumInput label="Amount" value={f.amount} onChange={(v) => setF({ ...f, amount: v ?? 0 })} />
+      </HStack>
+      <Select label="Type" value={f.type} options={TXN_TYPES} onChange={(v) => setF({ ...f, type: (v as BankTxnType) || 'deposit' })} />
+      <HStack>
+        <Field label="Slip / cheque / ref #" value={f.ref} onChange={(t) => setF({ ...f, ref: t })} />
+        <Field label="Note" value={f.note} onChange={(t) => setF({ ...f, note: t })} />
+      </HStack>
+      <Btn title={`Add to ${L.bankName(bankId)}`} onPress={add} style={{ marginTop: 10 }} />
+    </Card>
   );
 }
 

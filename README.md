@@ -18,6 +18,7 @@ stored on the phone, and the app works without internet.
 | **Credit (udhaar)** | Credit sales per customer and vehicle, recoveries in cash or bank, customer ledgers with credit limits |
 | **Expenses / income** | Expense heads paid from cash or bank, plus other cash income |
 | **Bank** | Cash deposits, withdrawals, transfers, cheques and charges. Card/digital sales, bank recoveries, bank expenses and bank-paid purchases post **automatically** |
+| **Upload bank statement** | Upload the statement from your bank as **PDF** (including password-protected e-statements), **Excel** or **CSV**. The app reads every line, totals **deposits** and withdrawals, compares day by day with your entries, matches each line (same amount, ±3 days), and lets you add missing lines to the app in one tap. Scanned photos can't be read |
 | **Bank statement** | Statement for any date range with running balance, totals, **reconciliation** against the real bank balance, and PDF export |
 | **Cash calculation** | Opening + cash from salesmen + recoveries + income + withdrawals − expenses − cash purchases − deposits = **expected cash**. A denomination counter (5000…1) gives the counted cash and the difference |
 | **Reports** | Daily and date-range reports: product-wise, salesman-wise, expenses by head, day-wise, and estimated profit (sale rate − average cost). Share or print as PDF (WhatsApp, email, printer) |
@@ -65,6 +66,7 @@ Code layout:
 * `src/store.tsx`: state and on-device storage (AsyncStorage)
 * `src/screens/`: Home, Daily entry, Reports, Ledgers, Setup
 * `src/report.ts`: PDF / print report generation
+* `src/statement.ts`: bank statement reading (columns, dates, amounts, PDF text layout) and reconciliation; `src/statementFile.ts` (Excel / CSV) and `src/PdfReader.tsx` + `src/pdfHtml.ts` (PDF.js in a hidden WebView, embedded by `scripts/gen-pdfjs.js` on install)
 
 ## First-time setup in the app
 

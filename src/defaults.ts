@@ -55,6 +55,7 @@ export function defaultData(): AppData {
     banks: [],
     customers: [],
     days: {},
+    statements: [],
   };
 }
 
@@ -103,5 +104,6 @@ export function normalize(raw: unknown): AppData {
     banks: Array.isArray(d.banks) ? d.banks : [],
     customers: Array.isArray(d.customers) ? d.customers : [],
     days,
+    statements: Array.isArray(d.statements) ? d.statements : [],
   };
 }
