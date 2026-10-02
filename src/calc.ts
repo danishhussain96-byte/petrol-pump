@@ -1,0 +1,592 @@
+// Pure calculation logic (no React) — daily sales, stock, salesman settlement,
+// cash in hand, bank statements and customer ledgers. Covered by tests in __tests__/.
+import type { AppData, BankTxnType, DayRecord, Product } from './types';
+import { round2, sum } from './utils';
+
+export const DENOMINATIONS = [5000, 1000, 500, 100, 50, 20, 10, 5, 2, 1];
+
+/** Pseudo salesman id for sales not assigned to anyone. */
+export const COUNTER = '';
+
+export interface NozzleLine {
+  nozzleId: string;
+  productId: string;
+  salesmanId: string;
+  opening: number;
+  closing: number;
+  testLitres: number;
+  litres: number;
+  rate: number;
+  amount: number;
+}
+
+export interface SalesmanRow {
+  salesmanId: string;
+  litres: number;
+  fuelAmount: number;
+  itemAmount: number;
+  saleAmount: number;
+  credit: number;
+  card: number;
+  digital: number;
+  cashDue: number;
+  cashReceived: number;
+  /** cashReceived − cashDue. Negative = short, positive = excess. */
+  diff: number;
+}
+
+export interface StockRow {
+  productId: string;
+  opening: number;
+  received: number;
+  sold: number;
+  book: number;
+  dip?: number;
+  /** dip − book. Negative = loss, positive = gain. */
+  variance: number;
+  closing: number;
+  rate: number;
+  saleAmount: number;
+  costRate: number;
+}
+
+export interface BankMove {
+  date: string;
+  bankId: string;
+  kind: BankTxnType | 'card' | 'digital' | 'receipt' | 'expense' | 'purchase';
+  description: string;
+  credit: number;
+  debit: number;
+}
+
+export interface CashFlow {
+  opening: number;
+  salesCash: number;
+  creditRecovery: number;
+  otherIncome: number;
+  bankWithdrawals: number;
+  expenses: number;
+  purchases: number;
+  bankDeposits: number;
+  expected: number;
+  counted: number;
+  hasCount: boolean;
+  /** counted − expected (only meaningful when hasCount). */
+  difference: number;
+  closing: number;
+}
+
+export interface DaySummary {
+  date: string;
+  nozzles: NozzleLine[];
+  stock: StockRow[];
+  salesmen: SalesmanRow[];
+  fuelLitres: number;
+  fuelAmount: number;
+  itemAmount: number;
+  totalSales: number;
+  card: number;
+  digital: number;
+  credit: number;
+  creditRecovery: number;
+  expenses: number;
+  otherIncome: number;
+  purchasesAmount: number;
+  cash: CashFlow;
+  bankMoves: BankMove[];
+  /** Σ sold × (rate − cost) − expenses + stock gain/loss at cost. */
+  grossMargin: number;
+  stockGainLossValue: number;
+  netProfit: number;
+  shortExcess: number;
+}
+
+export interface Carry {
+  stock: Record<string, number>;
+  cash: number;
+  meters: Record<string, number>;
+}
+
+export function rateOf(day: DayRecord, p: Product): number {
+  const r = day.rates[p.id];
+  return r === undefined ? p.rate : r;
+}
+
+export function costOf(day: DayRecord, p: Product): number {
+  const r = day.costRates[p.id];
+  return r === undefined ? p.costRate : r;
+}
+
+export function emptyDay(date: string): DayRecord {
+  return {
+    date,
+    rates: {},
+    costRates: {},
+    readings: [],
+    itemSales: [],
+    purchases: [],
+    dips: {},
+    settlements: [],
+    creditSales: [],
+    creditReceipts: [],
+    expenses: [],
+    bankTxns: [],
+    otherIncome: [],
+    cashCount: {},
+    looseCash: 0,
+    notes: '',
+    locked: false,
+  };
+}
+
+export function initialCarry(data: AppData): Carry {
+  const stock: Record<string, number> = {};
+  for (const p of data.products) stock[p.id] = p.openingStock || 0;
+  const meters: Record<string, number> = {};
+  for (const n of data.nozzles) meters[n.id] = n.openingReading || 0;
+  return { stock, cash: data.settings.openingCash || 0, meters };
+}
+
+export function countedCash(day: DayRecord): number {
+  let t = day.looseCash || 0;
+  for (const d of DENOMINATIONS) t += d * (day.cashCount[String(d)] || 0);
+  return t;
+}
+
+export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySummary {
+  const products = new Map(data.products.map((p) => [p.id, p]));
+  const nozzles = new Map(data.nozzles.map((n) => [n.id, n]));
+  const rate = (pid: string) => {
+    const p = products.get(pid);
+    return p ? rateOf(day, p) : 0;
+  };
+
+  // ---- Nozzle meter sales
+  const nozzleLines: NozzleLine[] = [];
+  for (const r of day.readings) {
+    const nz = nozzles.get(r.nozzleId);
+    if (!nz) continue;
+    const litres = Math.max(0, round2((r.closing || 0) - (r.opening || 0) - (r.testLitres || 0)));
+    const rt = rate(nz.productId);
+    nozzleLines.push({
+      nozzleId: nz.id,
+      productId: nz.productId,
+      salesmanId: r.salesmanId || COUNTER,
+      opening: r.opening || 0,
+      closing: r.closing || 0,
+      testLitres: r.testLitres || 0,
+      litres,
+      rate: rt,
+      amount: round2(litres * rt),
+    });
+  }
+
+  // ---- Salesman settlement
+  const sm = new Map<string, SalesmanRow>();
+  const row = (id: string): SalesmanRow => {
+    let r = sm.get(id);
+    if (!r) {
+      r = {
+        salesmanId: id,
+        litres: 0,
+        fuelAmount: 0,
+        itemAmount: 0,
+        saleAmount: 0,
+        credit: 0,
+        card: 0,
+        digital: 0,
+        cashDue: 0,
+        cashReceived: 0,
+        diff: 0,
+      };
+      sm.set(id, r);
+    }
+    return r;
+  };
+  for (const l of nozzleLines) {
+    const r = row(l.salesmanId);
+    r.litres += l.litres;
+    r.fuelAmount += l.amount;
+  }
+  for (const s of day.itemSales) {
+    row(s.salesmanId || COUNTER).itemAmount += round2((s.qty || 0) * rate(s.productId));
+  }
+  for (const c of day.creditSales) row(c.salesmanId || COUNTER).credit += c.amount || 0;
+  for (const st of day.settlements) {
+    const r = row(st.salesmanId || COUNTER);
+    r.card += st.cardSales || 0;
+    r.digital += st.digitalSales || 0;
+    r.cashReceived += st.cashReceived || 0;
+  }
+  const salesmen = [...sm.values()].map((r) => {
+    r.litres = round2(r.litres);
+    r.fuelAmount = round2(r.fuelAmount);
+    r.itemAmount = round2(r.itemAmount);
+    r.saleAmount = round2(r.fuelAmount + r.itemAmount);
+    r.cashDue = round2(r.saleAmount - r.credit - r.card - r.digital);
+    r.diff = round2(r.cashReceived - r.cashDue);
+    return r;
+  });
+
+  // ---- Stock
+  const soldQty: Record<string, number> = {};
+  for (const l of nozzleLines) soldQty[l.productId] = (soldQty[l.productId] || 0) + l.litres;
+  for (const s of day.itemSales) soldQty[s.productId] = (soldQty[s.productId] || 0) + (s.qty || 0);
+  const receivedQty: Record<string, number> = {};
+  for (const p of day.purchases) receivedQty[p.productId] = (receivedQty[p.productId] || 0) + (p.qty || 0);
+
+  const stock: StockRow[] = [];
+  for (const p of data.products) {
+    const opening = carry.stock[p.id] ?? p.openingStock ?? 0;
+    const received = receivedQty[p.id] || 0;
+    const sold = round2(soldQty[p.id] || 0);
+    const hasActivity = p.active || received || sold || opening;
+    if (!hasActivity) continue;
+    const book = round2(opening + received - sold);
+    const dip = day.dips[p.id];
+    const hasDip = typeof dip === 'number' && isFinite(dip);
+    const rt = rateOf(day, p);
+    stock.push({
+      productId: p.id,
+      opening: round2(opening),
+      received: round2(received),
+      sold,
+      book,
+      dip: hasDip ? dip : undefined,
+      variance: hasDip ? round2(dip - book) : 0,
+      closing: hasDip ? dip : book,
+      rate: rt,
+      saleAmount: round2(sold * rt),
+      costRate: costOf(day, p),
+    });
+  }
+
+  // ---- Totals
+  const fuelLitres = round2(sum(nozzleLines, (l) => l.litres));
+  const fuelAmount = round2(sum(nozzleLines, (l) => l.amount));
+  const itemAmount = round2(sum(day.itemSales, (s) => (s.qty || 0) * rate(s.productId)));
+  const totalSales = round2(fuelAmount + itemAmount);
+  const card = round2(sum(salesmen, (r) => r.card));
+  const digital = round2(sum(salesmen, (r) => r.digital));
+  const credit = round2(sum(day.creditSales, (c) => c.amount));
+  const shortExcess = round2(sum(salesmen, (r) => r.diff));
+
+  // ---- Cash in hand
+  const cashReceipts = day.creditReceipts.filter((r) => r.mode === 'cash');
+  const cashExpenses = day.expenses.filter((e) => e.mode === 'cash');
+  const cashPurchases = day.purchases.filter((p) => p.payMode === 'cash');
+  const cashFlow: CashFlow = {
+    opening: round2(carry.cash),
+    salesCash: round2(sum(salesmen, (r) => r.cashReceived)),
+    creditRecovery: round2(sum(cashReceipts, (r) => r.amount)),
+    otherIncome: round2(sum(day.otherIncome, (o) => o.amount)),
+    bankWithdrawals: round2(sum(day.bankTxns.filter((t) => t.type === 'withdrawal'), (t) => t.amount)),
+    expenses: round2(sum(cashExpenses, (e) => e.amount)),
+    purchases: round2(sum(cashPurchases, (p) => (p.qty || 0) * (p.rate || 0))),
+    bankDeposits: round2(sum(day.bankTxns.filter((t) => t.type === 'deposit'), (t) => t.amount)),
+    expected: 0,
+    counted: 0,
+    hasCount: false,
+    difference: 0,
+    closing: 0,
+  };
+  cashFlow.expected = round2(
+    cashFlow.opening +
+      cashFlow.salesCash +
+      cashFlow.creditRecovery +
+      cashFlow.otherIncome +
+      cashFlow.bankWithdrawals -
+      cashFlow.expenses -
+      cashFlow.purchases -
+      cashFlow.bankDeposits,
+  );
+  cashFlow.counted = round2(countedCash(day));
+  cashFlow.hasCount = cashFlow.counted > 0;
+  cashFlow.difference = cashFlow.hasCount ? round2(cashFlow.counted - cashFlow.expected) : 0;
+  cashFlow.closing = cashFlow.hasCount ? cashFlow.counted : cashFlow.expected;
+
+  // ---- Bank movements
+  const bankMoves: BankMove[] = [];
+  const mv = (m: Omit<BankMove, 'date'>) => {
+    if (m.bankId && (m.credit || m.debit)) bankMoves.push({ date: day.date, ...m });
+  };
+  const TXN_LABEL: Record<BankTxnType, string> = {
+    deposit: 'Cash deposit',
+    withdrawal: 'Cash withdrawal',
+    credit: 'Amount received',
+    debit: 'Payment',
+    charges: 'Bank charges',
+  };
+  for (const t of day.bankTxns) {
+    const isCredit = t.type === 'deposit' || t.type === 'credit';
+    const desc = [TXN_LABEL[t.type], t.ref, t.note].filter(Boolean).join(' · ');
+    mv({
+      bankId: t.bankId,
+      kind: t.type,
+      description: desc,
+      credit: isCredit ? t.amount || 0 : 0,
+      debit: isCredit ? 0 : t.amount || 0,
+    });
+  }
+  if (data.settings.cardBankId && card)
+    mv({ bankId: data.settings.cardBankId, kind: 'card', description: 'Card (POS) sales', credit: card, debit: 0 });
+  if (data.settings.digitalBankId && digital)
+    mv({ bankId: data.settings.digitalBankId, kind: 'digital', description: 'Digital / online sales', credit: digital, debit: 0 });
+  const customers = new Map(data.customers.map((c) => [c.id, c]));
+  for (const r of day.creditReceipts)
+    if (r.mode === 'bank' && r.bankId)
+      mv({
+        bankId: r.bankId,
+        kind: 'receipt',
+        description: `Recovery: ${customers.get(r.customerId)?.name ?? 'Customer'}${r.note ? ' · ' + r.note : ''}`,
+        credit: r.amount || 0,
+        debit: 0,
+      });
+  for (const e of day.expenses)
+    if (e.mode === 'bank' && e.bankId)
+      mv({ bankId: e.bankId, kind: 'expense', description: `Expense: ${e.head}`, credit: 0, debit: e.amount || 0 });
+  for (const p of day.purchases)
+    if (p.payMode === 'bank' && p.bankId)
+      mv({
+        bankId: p.bankId,
+        kind: 'purchase',
+        description: `Purchase: ${products.get(p.productId)?.name ?? ''} ${p.qty} @ ${p.rate}${p.supplier ? ' · ' + p.supplier : ''}`,
+        credit: 0,
+        debit: round2((p.qty || 0) * (p.rate || 0)),
+      });
+
+  // ---- Profit
+  const expenses = round2(sum(day.expenses, (e) => e.amount));
+  const grossMargin = round2(sum(stock, (s) => s.sold * (s.rate - s.costRate)));
+  const stockGainLossValue = round2(sum(stock, (s) => s.variance * s.costRate));
+  const otherIncome = round2(sum(day.otherIncome, (o) => o.amount));
+
+  return {
+    date: day.date,
+    nozzles: nozzleLines,
+    stock,
+    salesmen,
+    fuelLitres,
+    fuelAmount,
+    itemAmount,
+    totalSales,
+    card,
+    digital,
+    credit,
+    creditRecovery: round2(sum(day.creditReceipts, (r) => r.amount)),
+    expenses,
+    otherIncome,
+    purchasesAmount: round2(sum(day.purchases, (p) => (p.qty || 0) * (p.rate || 0))),
+    cash: cashFlow,
+    bankMoves,
+    grossMargin,
+    stockGainLossValue,
+    netProfit: round2(grossMargin + stockGainLossValue + otherIncome - expenses),
+    shortExcess,
+  };
+}
+
+export function nextCarry(carry: Carry, day: DayRecord, s: DaySummary): Carry {
+  const stock = { ...carry.stock };
+  for (const r of s.stock) stock[r.productId] = r.closing;
+  const meters = { ...carry.meters };
+  for (const r of day.readings) if (r.closing) meters[r.nozzleId] = r.closing;
+  return { stock, cash: s.cash.closing, meters };
+}
+
+export interface Ledger {
+  dates: string[];
+  summaries: Record<string, DaySummary>;
+  /** Carry-in (opening balances) for each recorded date. */
+  carryIn: Record<string, Carry>;
+  final: Carry;
+}
+
+/** Runs through all recorded days in date order, carrying stock, cash and meters forward. */
+export function computeLedger(data: AppData): Ledger {
+  const dates = Object.keys(data.days).sort();
+  const summaries: Record<string, DaySummary> = {};
+  const carryIn: Record<string, Carry> = {};
+  let carry = initialCarry(data);
+  for (const d of dates) {
+    carryIn[d] = carry;
+    const s = computeDay(data, data.days[d], carry);
+    summaries[d] = s;
+    carry = nextCarry(carry, data.days[d], s);
+  }
+  return { dates, summaries, carryIn, final: carry };
+}
+
+/** Opening balances for a date that may not be recorded yet. */
+export function carryFor(data: AppData, ledger: Ledger, date: string): Carry {
+  if (ledger.carryIn[date]) return ledger.carryIn[date];
+  let carry = initialCarry(data);
+  for (const d of ledger.dates) {
+    if (d >= date) break;
+    carry = nextCarry(carry, data.days[d], ledger.summaries[d]);
+  }
+  return carry;
+}
+
+// ---------------- Bank statement ----------------
+
+export interface StatementRow extends BankMove {
+  balance: number;
+}
+
+export interface Statement {
+  opening: number;
+  rows: StatementRow[];
+  totalCredit: number;
+  totalDebit: number;
+  closing: number;
+}
+
+export function bankStatement(data: AppData, ledger: Ledger, bankId: string, from: string, to: string): Statement {
+  const bank = data.banks.find((b) => b.id === bankId);
+  let balance = bank?.openingBalance || 0;
+  const rows: StatementRow[] = [];
+  let totalCredit = 0;
+  let totalDebit = 0;
+  let opening = balance;
+  for (const d of ledger.dates) {
+    if (d > to) break;
+    for (const m of ledger.summaries[d].bankMoves) {
+      if (m.bankId !== bankId) continue;
+      balance = round2(balance + m.credit - m.debit);
+      if (d < from) {
+        opening = balance;
+        continue;
+      }
+      totalCredit += m.credit;
+      totalDebit += m.debit;
+      rows.push({ ...m, balance });
+    }
+    if (d < from) opening = balance;
+  }
+  return { opening, rows, totalCredit: round2(totalCredit), totalDebit: round2(totalDebit), closing: balance };
+}
+
+export function bankBalance(data: AppData, ledger: Ledger, bankId: string, upto = '9999-12-31'): number {
+  return bankStatement(data, ledger, bankId, upto, upto).closing;
+}
+
+// ---------------- Customer (credit) ledger ----------------
+
+export interface CustomerRow {
+  date: string;
+  description: string;
+  debit: number; // credit sale (customer owes more)
+  credit: number; // payment received
+  balance: number;
+}
+
+export function customerLedger(data: AppData, customerId: string): { rows: CustomerRow[]; balance: number } {
+  const c = data.customers.find((x) => x.id === customerId);
+  let balance = c?.openingBalance || 0;
+  const rows: CustomerRow[] = [];
+  const products = new Map(data.products.map((p) => [p.id, p]));
+  for (const d of Object.keys(data.days).sort()) {
+    const day = data.days[d];
+    for (const s of day.creditSales) {
+      if (s.customerId !== customerId) continue;
+      balance = round2(balance + (s.amount || 0));
+      const p = s.productId ? products.get(s.productId) : undefined;
+      const desc = [p ? `${p.name} ${s.qty} ${p.unit}` : 'Credit sale', s.vehicleNo, s.slipNo && `Slip ${s.slipNo}`]
+        .filter(Boolean)
+        .join(' · ');
+      rows.push({ date: d, description: desc, debit: s.amount || 0, credit: 0, balance });
+    }
+    for (const r of day.creditReceipts) {
+      if (r.customerId !== customerId) continue;
+      balance = round2(balance - (r.amount || 0));
+      rows.push({
+        date: d,
+        description: `Received (${r.mode})${r.note ? ' · ' + r.note : ''}`,
+        debit: 0,
+        credit: r.amount || 0,
+        balance,
+      });
+    }
+  }
+  return { rows, balance };
+}
+
+// ---------------- Period report ----------------
+
+export interface PeriodReport {
+  from: string;
+  to: string;
+  days: number;
+  totalSales: number;
+  fuelLitres: number;
+  fuelAmount: number;
+  itemAmount: number;
+  card: number;
+  digital: number;
+  credit: number;
+  creditRecovery: number;
+  expenses: number;
+  otherIncome: number;
+  purchasesAmount: number;
+  grossMargin: number;
+  stockGainLossValue: number;
+  netProfit: number;
+  shortExcess: number;
+  byProduct: { productId: string; sold: number; amount: number; received: number; variance: number }[];
+  bySalesman: SalesmanRow[];
+  expenseHeads: { head: string; amount: number }[];
+  daily: DaySummary[];
+}
+
+export function periodReport(data: AppData, ledger: Ledger, from: string, to: string): PeriodReport {
+  const daily = ledger.dates.filter((d) => d >= from && d <= to).map((d) => ledger.summaries[d]);
+  const prod = new Map<string, { productId: string; sold: number; amount: number; received: number; variance: number }>();
+  const sm = new Map<string, SalesmanRow>();
+  const heads = new Map<string, number>();
+  for (const s of daily) {
+    for (const r of s.stock) {
+      const p = prod.get(r.productId) || { productId: r.productId, sold: 0, amount: 0, received: 0, variance: 0 };
+      p.sold = round2(p.sold + r.sold);
+      p.amount = round2(p.amount + r.saleAmount);
+      p.received = round2(p.received + r.received);
+      p.variance = round2(p.variance + r.variance);
+      prod.set(r.productId, p);
+    }
+    for (const r of s.salesmen) {
+      const a = sm.get(r.salesmanId);
+      if (!a) {
+        sm.set(r.salesmanId, { ...r });
+        continue;
+      }
+      for (const k of ['litres', 'fuelAmount', 'itemAmount', 'saleAmount', 'credit', 'card', 'digital', 'cashDue', 'cashReceived', 'diff'] as const)
+        a[k] = round2(a[k] + r[k]);
+    }
+    for (const e of data.days[s.date].expenses) heads.set(e.head || 'Other', round2((heads.get(e.head || 'Other') || 0) + e.amount));
+  }
+  const total = (f: (s: DaySummary) => number) => round2(sum(daily, f));
+  return {
+    from,
+    to,
+    days: daily.length,
+    totalSales: total((s) => s.totalSales),
+    fuelLitres: total((s) => s.fuelLitres),
+    fuelAmount: total((s) => s.fuelAmount),
+    itemAmount: total((s) => s.itemAmount),
+    card: total((s) => s.card),
+    digital: total((s) => s.digital),
+    credit: total((s) => s.credit),
+    creditRecovery: total((s) => s.creditRecovery),
+    expenses: total((s) => s.expenses),
+    otherIncome: total((s) => s.otherIncome),
+    purchasesAmount: total((s) => s.purchasesAmount),
+    grossMargin: total((s) => s.grossMargin),
+    stockGainLossValue: total((s) => s.stockGainLossValue),
+    netProfit: total((s) => s.netProfit),
+    shortExcess: total((s) => s.shortExcess),
+    byProduct: [...prod.values()].filter((p) => p.sold || p.received || p.variance),
+    bySalesman: [...sm.values()],
+    expenseHeads: [...heads.entries()].map(([head, amount]) => ({ head, amount })).sort((a, b) => b.amount - a.amount),
+    daily,
+  };
+}
