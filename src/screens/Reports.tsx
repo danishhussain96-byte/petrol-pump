@@ -69,6 +69,13 @@ export function Reports({ openDay }: { openDay: (d: string) => void }) {
               />
             ))}
           </Card>
+          {r.byUnit.length ? (
+            <Card title="Dispenser-wise">
+              {r.byUnit.map((u) => (
+                <Row key={u.unitId || 'none'} label={L.unitName(u.unitId)} value={`${num(u.litres)} L · ${L.cur} ${num(u.amount)}`} />
+              ))}
+            </Card>
+          ) : null}
           <Card title="Salesman-wise">
             {r.bySalesman.length === 0 ? <Empty text="No data" /> : null}
             {r.bySalesman.map((x) => (

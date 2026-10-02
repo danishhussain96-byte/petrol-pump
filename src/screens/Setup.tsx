@@ -5,11 +5,12 @@ import React, { useState } from 'react';
 import { Alert, Modal, ScrollView, Switch, Text, View } from 'react-native';
 import { useLookups } from '../hooks';
 import { useStore } from '../store';
-import type { AppData, BankAccount, Customer, Nozzle, Product, Salesman } from '../types';
+import { makeUnit } from '../defaults';
+import type { AppData, BankAccount, Customer, DispensingUnit, Nozzle, Product, Salesman } from '../types';
 import { Btn, C, Card, ChipBar, Empty, Field, HStack, ListItem, Muted, NumInput, Screen, Select, s, confirm } from '../ui';
 import { num, todayStr, uid } from '../utils';
 
-type Tab = 'products' | 'nozzles' | 'salesmen' | 'banks' | 'customers' | 'settings';
+type Tab = 'products' | 'units' | 'nozzles' | 'salesmen' | 'banks' | 'customers' | 'settings';
 
 export function Setup() {
   const [tab, setTab] = useState<Tab>('products');
@@ -18,6 +19,7 @@ export function Setup() {
       <ChipBar
         items={[
           { key: 'products', label: 'Products & rates' },
+          { key: 'units', label: 'Dispensers' },
           { key: 'nozzles', label: 'Nozzles' },
           { key: 'salesmen', label: 'Salesmen' },
           { key: 'banks', label: 'Bank accounts' },
@@ -29,6 +31,7 @@ export function Setup() {
       />
       <Screen>
         {tab === 'products' && <Products />}
+        {tab === 'units' && <Units />}
         {tab === 'nozzles' && <Nozzles />}
         {tab === 'salesmen' && <Salesmen />}
         {tab === 'banks' && <Banks />}
@@ -39,7 +42,7 @@ export function Setup() {
   );
 }
 
-type ListKey = 'products' | 'nozzles' | 'salesmen' | 'banks' | 'customers';
+type ListKey = 'products' | 'units' | 'nozzles' | 'salesmen' | 'banks' | 'customers';
 
 function useList<K extends ListKey>(key: K) {
   const { data, update } = useStore();
@@ -137,20 +140,100 @@ function Products() {
   );
 }
 
+// ---------- Dispensing units ----------
+function Units() {
+  const { data, update } = useStore();
+  const { items, save } = useList('units');
+  const L = useLookups();
+  const [ed, setEd] = useState<DispensingUnit | null>(null);
+  const addUnit = () =>
+    update((d) => {
+      let n = d.units.length + 1;
+      while (d.units.some((u) => u.id === `du${n}`)) n++;
+      const { unit, nozzles } = makeUnit(n);
+      const fuelIds = new Set(d.products.filter((p) => p.isFuel).map((p) => p.id));
+      const fallback = d.products.find((p) => p.isFuel)?.id ?? '';
+      return {
+        ...d,
+        units: [...d.units, unit],
+        nozzles: [...d.nozzles, ...nozzles.map((z) => (fuelIds.has(z.productId) ? z : { ...z, productId: fallback }))],
+      };
+    });
+  const removeUnit = (id: string) =>
+    update((d) => ({
+      ...d,
+      units: d.units.filter((u) => u.id !== id),
+      // Keep the nozzles (they have meter history) but detach them.
+      nozzles: d.nozzles.map((z) => (z.unitId === id ? { ...z, unitId: undefined } : z)),
+    }));
+  const bankLabel = (id?: string, fallback?: string) => (id ? L.bankName(id) : fallback ? `${L.bankName(fallback)} (default)` : 'not posted');
+  return (
+    <>
+      <Card title="Dispensing units" right={<Btn title="+ Add (4 nozzles)" small onPress={addUnit} />}>
+        {items.length === 0 ? <Empty text="No dispensers" /> : null}
+        {items.map((u) => (
+          <ListItem
+            key={u.id}
+            title={`${u.name}${u.active ? '' : ' (inactive)'}`}
+            sub={`${data.nozzles.filter((z) => z.unitId === u.id).length} nozzles · Card → ${bankLabel(u.cardBankId, data.settings.cardBankId)} · Digital → ${bankLabel(u.digitalBankId, data.settings.digitalBankId)}`}
+            onPress={() => setEd(u)}
+          />
+        ))}
+      </Card>
+      <Muted>Set the bank account each dispenser's POS machine and wallet pay into. Card / digital sales then post to that bank automatically.</Muted>
+      {ed ? (
+        <EditModal
+          title={ed.name || 'Dispenser'}
+          visible
+          onClose={() => setEd(null)}
+          onSave={() => {
+            if (!ed.name.trim()) return Alert.alert('Name required');
+            save(ed);
+            setEd(null);
+          }}
+          onDelete={items.some((x) => x.id === ed.id) ? () => (removeUnit(ed.id), setEd(null)) : undefined}
+        >
+          <Field label="Name" value={ed.name} onChange={(t) => setEd({ ...ed, name: t })} />
+          <Select label="Card (POS) sales go to" value={ed.cardBankId} options={L.opt.banks} allowNone="— Use default from Settings —" onChange={(v) => setEd({ ...ed, cardBankId: v })} />
+          <Select label="Digital / online sales go to" value={ed.digitalBankId} options={L.opt.banks} allowNone="— Use default from Settings —" onChange={(v) => setEd({ ...ed, digitalBankId: v })} />
+          {L.opt.banks.length === 0 ? <Muted style={{ marginTop: 6 }}>Add bank accounts first (Setup → Bank accounts).</Muted> : null}
+          <ActiveSwitch value={ed.active} onChange={(v) => setEd({ ...ed, active: v })} />
+        </EditModal>
+      ) : null}
+    </>
+  );
+}
+
 // ---------- Nozzles ----------
 function Nozzles() {
+  const { data } = useStore();
   const { items, save, remove } = useList('nozzles');
   const L = useLookups();
   const [ed, setEd] = useState<Nozzle | null>(null);
   const fuels = L.opt.products.filter((o) => L.product.get(o.value)?.isFuel);
+  const groups = [...data.units.map((u) => ({ id: u.id as string | undefined, name: u.name })), { id: undefined, name: 'No dispenser' }]
+    .map((g) => ({ ...g, nozzles: items.filter((n) => (g.id ? n.unitId === g.id : !n.unitId || !L.unit.has(n.unitId))) }))
+    .filter((g) => g.nozzles.length > 0 || g.id);
   return (
     <>
-      <Card title="Nozzles / dispensers" right={<Btn title="+ Add" small onPress={() => setEd({ id: uid(), name: `Nozzle ${items.length + 1}`, productId: fuels[0]?.value ?? '', openingReading: 0, active: true })} />}>
-        {items.length === 0 ? <Empty text="No nozzles" /> : null}
-        {items.map((n) => (
-          <ListItem key={n.id} title={`${n.name}${n.active ? '' : ' (inactive)'}`} sub={L.productName(n.productId)} right={`Opening ${num(n.openingReading)}`} onPress={() => setEd(n)} />
-        ))}
-      </Card>
+      {groups.map((g) => (
+        <Card
+          key={g.id ?? 'none'}
+          title={g.name}
+          right={
+            <Btn
+              title="+ Nozzle"
+              small
+              onPress={() => setEd({ id: uid(), name: `${g.name} N${g.nozzles.length + 1}`, productId: fuels[0]?.value ?? '', unitId: g.id, openingReading: 0, active: true })}
+            />
+          }
+        >
+          {g.nozzles.length === 0 ? <Empty text="No nozzles" /> : null}
+          {g.nozzles.map((n) => (
+            <ListItem key={n.id} title={`${n.name}${n.active ? '' : ' (inactive)'}`} sub={L.productName(n.productId)} right={`Opening ${num(n.openingReading)}`} onPress={() => setEd(n)} />
+          ))}
+        </Card>
+      ))}
       <Muted>Opening reading is used only for the first day. After that, each day's opening is the previous day's closing.</Muted>
       {ed ? (
         <EditModal
@@ -165,6 +248,7 @@ function Nozzles() {
           onDelete={items.some((x) => x.id === ed.id) ? () => (remove(ed.id), setEd(null)) : undefined}
         >
           <Field label="Name" value={ed.name} onChange={(t) => setEd({ ...ed, name: t })} />
+          <Select label="Dispensing unit" value={ed.unitId} options={L.opt.units} allowNone="— None —" onChange={(v) => setEd({ ...ed, unitId: v })} />
           <Select label="Product" value={ed.productId} options={fuels} onChange={(v) => setEd({ ...ed, productId: v ?? '' })} />
           <NumInput label="Opening meter reading" value={ed.openingReading} onChange={(v) => setEd({ ...ed, openingReading: v ?? 0 })} />
           <ActiveSwitch value={ed.active} onChange={(v) => setEd({ ...ed, active: v })} />
@@ -326,8 +410,8 @@ function SettingsView() {
         </HStack>
         <NumInput label="Opening cash in hand (before first day)" value={st.openingCash} onChange={(v) => set({ openingCash: v ?? 0 })} />
       </Card>
-      <Card title="Card & digital payments">
-        <Muted>Card / digital sales recorded in salesman settlement are credited automatically to these accounts in the bank statement.</Muted>
+      <Card title="Default card & digital accounts">
+        <Muted>Default accounts. A dispenser with its own bank account (Setup → Dispensers) uses that instead.</Muted>
         <Select label="Card (POS) sales go to" value={st.cardBankId} options={L.opt.banks} allowNone="— Don't post to bank —" onChange={(v) => set({ cardBankId: v })} />
         <Select label="Digital / online sales go to" value={st.digitalBankId} options={L.opt.banks} allowNone="— Don't post to bank —" onChange={(v) => set({ digitalBankId: v })} />
       </Card>

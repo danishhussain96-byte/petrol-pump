@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bankStatement, computeLedger, customerLedger, periodReport } from '../src/calc';
-import { defaultData, newDay } from '../src/defaults';
-import { initialCarry } from '../src/calc';
+import { defaultData, newDay, normalize } from '../src/defaults';
+import { initialCarry, payBankFor } from '../src/calc';
 import type { AppData } from '../src/types';
 
 function setup(): AppData {
@@ -109,4 +109,65 @@ test('cash count overrides expected closing', () => {
   assert.equal(s.cash.counted, 19950);
   assert.equal(s.cash.difference, -50);
   assert.equal(s.cash.closing, 19950);
+});
+
+test('default layout is 3 dispensing units with 4 nozzles each', () => {
+  const data = defaultData();
+  assert.equal(data.units.length, 3);
+  assert.equal(data.nozzles.length, 12);
+  for (const u of data.units) assert.equal(data.nozzles.filter((n) => n.unitId === u.id).length, 4);
+});
+
+test('card / digital sales post to each dispenser bank', () => {
+  const data = defaultData();
+  data.products.find((p) => p.id === 'petrol')!.rate = 100;
+  data.banks = [
+    { id: 'hbl', name: 'HBL', accountNo: '', openingBalance: 0, active: true },
+    { id: 'mzn', name: 'Meezan', accountNo: '', openingBalance: 0, active: true },
+  ];
+  data.salesmen = [{ id: 'ali', name: 'Ali', phone: '', active: true }];
+  data.units[0].cardBankId = 'hbl';
+  data.units[1].cardBankId = 'mzn';
+  data.settings.digitalBankId = 'hbl';
+  const day = newDay(data, '2026-10-01', initialCarry(data));
+  // Ali sells 100 L on D1-N1 and 50 L on D2-N1
+  day.readings = day.readings.map((r) =>
+    r.nozzleId === 'du1n1' ? { ...r, closing: 100, salesmanId: 'ali' } : r.nozzleId === 'du2n1' ? { ...r, closing: 50, salesmanId: 'ali' } : r,
+  );
+  day.settlements.push({
+    salesmanId: 'ali',
+    cardSales: 0,
+    digitalSales: 0,
+    cashReceived: 9000,
+    payments: { 'card:hbl': 3000, 'card:mzn': 2000, 'digital:hbl': 1000 },
+  });
+  data.days[day.date] = day;
+  const l = computeLedger(data);
+  const s = l.summaries[day.date];
+  assert.deepEqual(
+    s.units.map((u) => [u.unitId, u.litres, u.amount]),
+    [['du1', 100, 10000], ['du2', 50, 5000], ['du3', 0, 0]],
+  );
+  const ali = s.salesmen[0];
+  assert.equal(ali.card, 5000);
+  assert.equal(ali.digital, 1000);
+  assert.equal(ali.cashDue, 9000);
+  assert.equal(ali.diff, 0);
+  assert.equal(bankStatement(data, l, 'hbl', '2026-10-01', '2026-10-01').closing, 4000);
+  assert.equal(bankStatement(data, l, 'mzn', '2026-10-01', '2026-10-01').closing, 2000);
+  assert.equal(payBankFor(data, 'card', 'du3n1'), ''); // no unit bank, no default
+  assert.equal(payBankFor(data, 'digital', 'du3n1'), 'hbl'); // falls back to Settings
+  assert.deepEqual(periodReport(data, l, '2026-10-01', '2026-10-01').byUnit.map((u) => u.litres), [100, 50, 0]);
+});
+
+test('v1.0.0 data migrates to dispensing units', () => {
+  const oldNozzles = [1, 2, 3, 4].map((i) => ({ id: `n${i}`, name: `Nozzle ${i}`, productId: 'petrol', openingReading: 0, active: true }));
+  const fresh = normalize({ ...defaultData(), units: undefined, nozzles: oldNozzles });
+  assert.equal(fresh.units.length, 3);
+  assert.equal(fresh.nozzles.length, 12);
+
+  const used = { ...defaultData(), units: undefined, nozzles: oldNozzles.map((n) => ({ ...n, openingReading: 500 })) };
+  const kept = normalize(used);
+  assert.equal(kept.units.length, 1);
+  assert.deepEqual(kept.nozzles.map((n) => [n.id, n.unitId]), [['n1', 'du1'], ['n2', 'du1'], ['n3', 'du1'], ['n4', 'du1']]);
 });

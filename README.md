@@ -9,8 +9,9 @@ stored on the phone, and the app works without internet.
 
 | Area | What it does |
 |---|---|
-| **Meter readings** | Opening and closing reading for each nozzle (opening carries forward from the previous day), test/return litres, a salesman for each nozzle, and per-day rate overrides |
-| **Salesman sales** | Litres and amount per salesman, minus credit, card (POS) and digital sales, gives **cash due**. Enter the cash received and the app shows **Short / Excess** |
+| **Dispensers & nozzles** | Starts with 3 dispensing units × 4 nozzles (2 petrol + 2 diesel each), all editable. Each dispenser has its own card (POS) and digital bank account |
+| **Meter readings** | Grouped by dispenser. Opening and closing reading for each nozzle (opening carries forward from the previous day), test/return litres, one salesman for a whole dispenser or per nozzle, and per-day rate overrides |
+| **Salesman sales** | Litres and amount per salesman, minus credit, card (POS) and digital sales (entered per bank account of the dispensers they worked), gives **cash due**. Enter the cash received and the app shows **Short / Excess** |
 | **Lube / items** | Counter sales of engine oil, filters and other items, tracked per salesman |
 | **Stock** | Opening + received − sold = book stock. Enter a dip or physical count to see the **gain / loss**, with low-stock alerts |
 | **Purchases** | Stock received (supplier, invoice/bilty #) paid by cash, bank or on credit |
@@ -68,7 +69,8 @@ Code layout:
 ## First-time setup in the app
 
 1. **Setup → Products & rates**: sale rate, cost rate, and opening stock for each product.
-2. **Setup → Nozzles**: one entry per nozzle, with its product and current meter reading.
-3. **Setup → Salesmen / Bank accounts / Customers**: add with opening balances.
-4. **Setup → Settings**: station name, opening cash in hand, the bank account that receives card sales, and an optional PIN.
-5. Each day, open **Daily** and fill Meters → Salesmen → Stock → Credit → Expenses → Bank → Cash, then lock the day from **Summary**.
+2. **Setup → Dispensers**: pick the bank account each dispenser's POS machine and wallet pay into.
+3. **Setup → Nozzles**: check each nozzle's product and enter its current meter reading.
+4. **Setup → Salesmen / Bank accounts / Customers**: add with opening balances.
+5. **Setup → Settings**: station name, opening cash in hand, default card/digital bank (for dispensers without their own), and an optional PIN.
+6. Each day, open **Daily** and fill Meters → Salesmen → Stock → Credit → Expenses → Bank → Cash, then lock the day from **Summary**.

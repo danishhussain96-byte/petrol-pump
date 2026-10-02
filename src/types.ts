@@ -11,9 +11,9 @@ export interface Settings {
   currency: string;
   /** Cash in hand before the first recorded day. */
   openingCash: number;
-  /** Bank account that receives card (POS) sales; card sales are auto-credited to it. */
+  /** Default bank account for card (POS) sales when a dispensing unit has none. */
   cardBankId?: string;
-  /** Bank account that receives digital wallet / online transfer sales. */
+  /** Default bank account for digital / online sales when a dispensing unit has none. */
   digitalBankId?: string;
   /** Optional 4–6 digit PIN to lock the app. Empty = no lock. */
   pin: string;
@@ -39,10 +39,22 @@ export interface Product {
   active: boolean;
 }
 
+/** A dispensing unit (dispenser / machine) holding several nozzles. */
+export interface DispensingUnit {
+  id: string;
+  name: string;
+  /** Bank account its card (POS) machine pays into. Falls back to Settings when empty. */
+  cardBankId?: string;
+  /** Bank account its digital / online payments go to. Falls back to Settings when empty. */
+  digitalBankId?: string;
+  active: boolean;
+}
+
 export interface Nozzle {
   id: string;
   name: string;
   productId: string;
+  unitId?: string;
   /** Meter reading before the first recorded day. */
   openingReading: number;
   active: boolean;
@@ -108,6 +120,12 @@ export interface SalesmanSettlement {
   digitalSales: number;
   /** Cash actually handed over by the salesman. */
   cashReceived: number;
+  /**
+   * Card / digital amounts split by bank account, keyed `card:<bankId>` or `digital:<bankId>`
+   * (empty bankId = not posted to any bank). cardSales / digitalSales above are the older
+   * single-account fields and post to the Settings accounts.
+   */
+  payments?: Record<string, number>;
 }
 
 export interface CreditSale {
@@ -195,6 +213,7 @@ export interface AppData {
   version: 1;
   settings: Settings;
   products: Product[];
+  units: DispensingUnit[];
   nozzles: Nozzle[];
   salesmen: Salesman[];
   banks: BankAccount[];

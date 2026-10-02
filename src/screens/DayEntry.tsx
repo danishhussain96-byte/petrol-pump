@@ -1,14 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
-import { COUNTER, DENOMINATIONS, carryFor, computeDay, rateOf, type DaySummary } from '../calc';
+import { COUNTER, DENOMINATIONS, carryFor, computeDay, parsePaymentKey, payBankFor, paymentKey, rateOf, type DaySummary, type PayKind } from '../calc';
 import { useLookups } from '../hooks';
 import { shareDayReport } from '../report';
 import { useStore } from '../store';
-import type { BankTxnType, DayRecord, NozzleReading } from '../types';
+import type { BankTxnType, DayRecord, NozzleReading, SalesmanSettlement } from '../types';
 import {
   Btn,
   C,
   Card,
+  Chip,
   ChipBar,
   Divider,
   Empty,
@@ -110,6 +111,8 @@ export function DayEntry({ date, setDate }: { date: string; setDate: (d: string)
 
 // ---------------- Meters ----------------
 
+const ALL = '*all*';
+
 function Meters({ day, sum, set }: SectionProps) {
   const { data, ledger } = useStore();
   const L = useLookups();
@@ -126,6 +129,19 @@ function Meters({ day, sum, set }: SectionProps) {
       return { ...d, readings };
     });
   const fuels = data.products.filter((p) => p.isFuel && p.active);
+  const [unitFilter, setUnitFilter] = useState<string>(ALL);
+  // Nozzles grouped by dispensing unit, in Setup order; nozzles without a unit go last.
+  const unitOrder = [...data.units.map((u) => u.id), ''];
+  const groups = unitOrder
+    .map((unitId) => ({ unitId, nozzleIds: nozzleIds.filter((id) => (L.nozzle.get(id)?.unitId ?? '') === unitId) }))
+    .filter((g) => g.nozzleIds.length > 0);
+  // Units that no longer exist in Setup still show, under "No dispenser".
+  const orphans = nozzleIds.filter((id) => !unitOrder.includes(L.nozzle.get(id)?.unitId ?? ''));
+  if (orphans.length) {
+    const none = groups.find((g) => g.unitId === '');
+    if (none) none.nozzleIds.push(...orphans);
+    else groups.push({ unitId: '', nozzleIds: orphans });
+  }
 
   return (
     <>
@@ -144,24 +160,60 @@ function Meters({ day, sum, set }: SectionProps) {
         <Muted style={{ marginTop: 6 }}>Rate change for one day only. Change the default rate in Setup → Products.</Muted>
       </Card>
       {nozzleIds.length === 0 ? <Empty text="No nozzles yet. Add them in Setup → Nozzles." /> : null}
-      {nozzleIds.map((id) => {
-        const nz = L.nozzle.get(id);
-        const r = readingOf(id);
-        const line = sum.nozzles.find((l) => l.nozzleId === id);
-        const invalid = r.closing > 0 && r.closing < r.opening;
-        return (
-          <Card key={id} title={`${nz?.name ?? 'Nozzle'} · ${L.productName(nz?.productId)}`} right={<Text style={{ fontWeight: '700', color: C.primary }}>{num(line?.litres ?? 0)} L</Text>}>
-            <Select label="Salesman" value={r.salesmanId} options={L.opt.salesmen} allowNone="— Not assigned —" onChange={(v) => setReading(id, { salesmanId: v })} />
-            <HStack>
-              <NumInput label="Opening" value={r.opening} onChange={(v) => setReading(id, { opening: v ?? 0 })} />
-              <NumInput label="Closing" value={r.closing} onChange={(v) => setReading(id, { closing: v ?? 0 })} />
-              <NumInput label="Test / return" value={r.testLitres} onChange={(v) => setReading(id, { testLitres: v ?? 0 })} style={{ maxWidth: 100 }} />
-            </HStack>
-            {invalid ? <Text style={{ color: C.red, marginTop: 6 }}>Closing is less than opening.</Text> : null}
-            <Row label="Amount" value={`${L.cur} ${num(line?.amount ?? 0)}`} bold />
-          </Card>
-        );
-      })}
+      {data.units.length > 1 ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+          <Chip title="All" active={unitFilter === ALL} onPress={() => setUnitFilter(ALL)} />
+          {groups.map((g) => (
+            <Chip key={g.unitId || 'none'} title={L.unitName(g.unitId)} active={unitFilter === g.unitId} onPress={() => setUnitFilter(g.unitId)} />
+          ))}
+        </View>
+      ) : null}
+      {groups
+        .filter((g) => unitFilter === ALL || unitFilter === g.unitId)
+        .map((g) => {
+          const total = sum.units.find((u) => u.unitId === g.unitId);
+          const ids = g.nozzleIds;
+          const common = ids.map((id) => readingOf(id).salesmanId).every((x, _, a) => x === a[0]) ? readingOf(ids[0]).salesmanId : undefined;
+          return (
+            <View key={g.unitId || 'none'} style={{ marginBottom: 6 }}>
+              <Card
+                title={`⛽ ${L.unitName(g.unitId)}`}
+                right={<Text style={{ fontWeight: '700', color: C.primary }}>{num(total?.litres ?? 0)} L · {L.cur} {num(total?.amount ?? 0)}</Text>}
+                style={{ backgroundColor: C.chip, borderColor: C.chip }}
+              >
+                <Select
+                  label="Salesman on all nozzles of this dispenser"
+                  value={common}
+                  options={L.opt.salesmen}
+                  allowNone="— Not assigned / mixed —"
+                  onChange={(v) => set((d) => {
+                    let readings = d.readings.map((r) => (ids.includes(r.nozzleId) ? { ...r, salesmanId: v } : r));
+                    for (const id of ids) if (!readings.some((r) => r.nozzleId === id)) readings = [...readings, { ...readingOf(id), salesmanId: v }];
+                    return { ...d, readings };
+                  })}
+                />
+              </Card>
+              {ids.map((id) => {
+                const nz = L.nozzle.get(id);
+                const r = readingOf(id);
+                const line = sum.nozzles.find((l) => l.nozzleId === id);
+                const invalid = r.closing > 0 && r.closing < r.opening;
+                return (
+                  <Card key={id} title={`${nz?.name ?? 'Nozzle'} · ${L.productName(nz?.productId)}`} right={<Text style={{ fontWeight: '700', color: C.primary }}>{num(line?.litres ?? 0)} L</Text>}>
+                    <HStack>
+                      <NumInput label="Opening" value={r.opening} onChange={(v) => setReading(id, { opening: v ?? 0 })} />
+                      <NumInput label="Closing" value={r.closing} onChange={(v) => setReading(id, { closing: v ?? 0 })} />
+                      <NumInput label="Test" value={r.testLitres} onChange={(v) => setReading(id, { testLitres: v ?? 0 })} style={{ maxWidth: 80 }} />
+                    </HStack>
+                    {invalid ? <Text style={{ color: C.red, marginTop: 6 }}>Closing is less than opening.</Text> : null}
+                    <Select label="Salesman" value={r.salesmanId} options={L.opt.salesmen} allowNone="— Not assigned —" onChange={(v) => setReading(id, { salesmanId: v })} />
+                    <Row label="Amount" value={`${L.cur} ${num(line?.amount ?? 0)}`} bold />
+                  </Card>
+                );
+              })}
+            </View>
+          );
+        })}
       <Card title="Fuel total">
         {fuels.map((p) => {
           const lines = sum.nozzles.filter((l) => l.productId === p.id);
@@ -303,9 +355,70 @@ function Stock({ day, sum, set }: SectionProps) {
 
 // ---------------- Salesmen settlement ----------------
 
+interface PayBucket {
+  key: string;
+  kind: PayKind;
+  bankId: string;
+  units: string[];
+}
+
 function Salesmen({ day, sum, set }: SectionProps) {
   const L = useLookups();
+  const { data } = useStore();
   const ids = [...new Set([...sum.salesmen.map((r) => r.salesmanId), ...day.settlements.map((s) => s.salesmanId)])];
+  const legacyKey = { card: paymentKey('card', data.settings.cardBankId), digital: paymentKey('digital', data.settings.digitalBankId) };
+
+  /** One card and one digital box per bank account behind the dispensers this salesman worked. */
+  const bucketsFor = (salesmanId: string): PayBucket[] => {
+    const map = new Map<string, PayBucket>();
+    const add = (kind: PayKind, bankId: string, unitId?: string) => {
+      const key = paymentKey(kind, bankId);
+      const b = map.get(key) || { key, kind, bankId, units: [] };
+      if (unitId !== undefined) {
+        const name = L.unitName(unitId);
+        if (!b.units.includes(name)) b.units.push(name);
+      }
+      map.set(key, b);
+    };
+    const lines = sum.nozzles.filter((l) => l.salesmanId === salesmanId);
+    for (const kind of ['card', 'digital'] as const) {
+      if (lines.length === 0) add(kind, payBankFor(data, kind, undefined));
+      for (const l of lines) add(kind, payBankFor(data, kind, l.nozzleId), l.unitId);
+    }
+    const st = day.settlements.find((x) => x.salesmanId === salesmanId);
+    for (const [key, amount] of Object.entries(st?.payments || {})) if (amount) {
+      const { kind, bankId } = parsePaymentKey(key);
+      add(kind, bankId);
+    }
+    if (st?.cardSales) add('card', data.settings.cardBankId || '');
+    if (st?.digitalSales) add('digital', data.settings.digitalBankId || '');
+    return [...map.values()].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'card' ? -1 : 1));
+  };
+  const payValue = (salesmanId: string, b: PayBucket) => {
+    const st = day.settlements.find((x) => x.salesmanId === salesmanId);
+    let v = st?.payments?.[b.key] || 0;
+    if (b.key === legacyKey.card) v += st?.cardSales || 0;
+    if (b.key === legacyKey.digital) v += st?.digitalSales || 0;
+    return v;
+  };
+  const setPay = (salesmanId: string, b: PayBucket, amount: number) =>
+    set((d) => {
+      const upd = (x: SalesmanSettlement): SalesmanSettlement => {
+        const y = { ...x, payments: { ...(x.payments || {}), [b.key]: amount } };
+        // Fold the older single-account amount into the per-bank entry it belonged to.
+        if (b.key === legacyKey.card) y.cardSales = 0;
+        if (b.key === legacyKey.digital) y.digitalSales = 0;
+        return y;
+      };
+      const exists = d.settlements.some((x) => x.salesmanId === salesmanId);
+      const settlements = exists
+        ? d.settlements.map((x) => (x.salesmanId === salesmanId ? upd(x) : x))
+        : [...d.settlements, upd({ salesmanId, cardSales: 0, digitalSales: 0, cashReceived: 0 })];
+      return { ...d, settlements };
+    });
+  const payLabel = (b: PayBucket) =>
+    `− ${b.kind === 'card' ? 'Card' : 'Digital'} · ${b.bankId ? L.bankName(b.bankId) : 'no bank'}${b.units.length ? ` (${b.units.join(', ')})` : ''}`;
+
   const setS = (salesmanId: string, patch: Partial<{ cardSales: number; digitalSales: number; cashReceived: number }>) =>
     set((d) => {
       const exists = d.settlements.some((s) => s.salesmanId === salesmanId);
@@ -328,10 +441,9 @@ function Salesmen({ day, sum, set }: SectionProps) {
             {r.itemAmount ? <Row small label="Lube / items" value={`${L.cur} ${num(r.itemAmount)}`} /> : null}
             <Row small label="Total sale" value={`${L.cur} ${num(r.saleAmount)}`} bold />
             <Row small label="− Credit sales (from Credit tab)" value={`${L.cur} ${num(r.credit)}`} />
-            <HStack>
-              <NumInput label="− Card (POS)" value={st?.cardSales ?? 0} onChange={(v) => setS(id, { cardSales: v ?? 0 })} />
-              <NumInput label="− Digital / online" value={st?.digitalSales ?? 0} onChange={(v) => setS(id, { digitalSales: v ?? 0 })} />
-            </HStack>
+            {bucketsFor(id).map((b) => (
+              <NumInput key={b.key} label={payLabel(b)} value={payValue(id, b)} onChange={(v) => setPay(id, b, v ?? 0)} />
+            ))}
             <Row label="= Cash due" value={`${L.cur} ${num(r.cashDue)}`} bold />
             <HStack>
               <NumInput label="Cash received from salesman" value={st?.cashReceived ?? 0} onChange={(v) => setS(id, { cashReceived: v ?? 0 })} />
@@ -544,7 +656,7 @@ function Bank({ day, sum, set }: SectionProps) {
         ))}
       </Card>
       <Card title="All bank movements today">
-        <Muted style={{ marginBottom: 6 }}>Also includes card/digital sales (see Setup → Settings), bank recoveries, bank expenses and bank-paid purchases.</Muted>
+        <Muted style={{ marginBottom: 6 }}>Also includes card/digital sales (to each dispenser's bank), bank recoveries, bank expenses and bank-paid purchases.</Muted>
         {sum.bankMoves.length === 0 ? <Empty text="No bank movements" /> : null}
         {sum.bankMoves.map((m, i) => (
           <ListItem key={i} title={m.description} sub={L.bankName(m.bankId)} right={m.credit ? `+${num(m.credit)}` : `−${num(m.debit)}`} />

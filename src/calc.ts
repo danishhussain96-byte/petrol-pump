@@ -8,8 +8,34 @@ export const DENOMINATIONS = [5000, 1000, 500, 100, 50, 20, 10, 5, 2, 1];
 /** Pseudo salesman id for sales not assigned to anyone. */
 export const COUNTER = '';
 
+export type PayKind = 'card' | 'digital';
+
+export function paymentKey(kind: PayKind, bankId: string | undefined): string {
+  return `${kind}:${bankId ?? ''}`;
+}
+
+export function parsePaymentKey(key: string): { kind: PayKind; bankId: string } {
+  const i = key.indexOf(':');
+  return { kind: key.slice(0, i) === 'digital' ? 'digital' : 'card', bankId: key.slice(i + 1) };
+}
+
+/** Bank account a nozzle's card / digital sales go to: its unit's account, else the Settings default. */
+export function payBankFor(data: AppData, kind: PayKind, nozzleId: string | undefined): string {
+  const nz = nozzleId ? data.nozzles.find((n) => n.id === nozzleId) : undefined;
+  const unit = nz?.unitId ? data.units.find((u) => u.id === nz.unitId) : undefined;
+  const own = kind === 'card' ? unit?.cardBankId : unit?.digitalBankId;
+  return own || (kind === 'card' ? data.settings.cardBankId : data.settings.digitalBankId) || '';
+}
+
+export interface UnitRow {
+  unitId: string;
+  litres: number;
+  amount: number;
+}
+
 export interface NozzleLine {
   nozzleId: string;
+  unitId: string;
   productId: string;
   salesmanId: string;
   opening: number;
@@ -79,6 +105,7 @@ export interface CashFlow {
 export interface DaySummary {
   date: string;
   nozzles: NozzleLine[];
+  units: UnitRow[];
   stock: StockRow[];
   salesmen: SalesmanRow[];
   fuelLitres: number;
@@ -170,6 +197,7 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
     const rt = rate(nz.productId);
     nozzleLines.push({
       nozzleId: nz.id,
+      unitId: nz.unitId ?? '',
       productId: nz.productId,
       salesmanId: r.salesmanId || COUNTER,
       opening: r.opening || 0,
@@ -179,6 +207,15 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
       rate: rt,
       amount: round2(litres * rt),
     });
+  }
+
+  // ---- Dispensing unit totals
+  const unitMap = new Map<string, UnitRow>();
+  for (const l of nozzleLines) {
+    const u = unitMap.get(l.unitId) || { unitId: l.unitId, litres: 0, amount: 0 };
+    u.litres = round2(u.litres + l.litres);
+    u.amount = round2(u.amount + l.amount);
+    unitMap.set(l.unitId, u);
   }
 
   // ---- Salesman settlement
@@ -216,6 +253,10 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
     const r = row(st.salesmanId || COUNTER);
     r.card += st.cardSales || 0;
     r.digital += st.digitalSales || 0;
+    for (const [key, amount] of Object.entries(st.payments || {})) {
+      if (parsePaymentKey(key).kind === 'card') r.card += amount || 0;
+      else r.digital += amount || 0;
+    }
     r.cashReceived += st.cashReceived || 0;
   }
   const salesmen = [...sm.values()].map((r) => {
@@ -328,10 +369,19 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
       debit: isCredit ? 0 : t.amount || 0,
     });
   }
-  if (data.settings.cardBankId && card)
-    mv({ bankId: data.settings.cardBankId, kind: 'card', description: 'Card (POS) sales', credit: card, debit: 0 });
-  if (data.settings.digitalBankId && digital)
-    mv({ bankId: data.settings.digitalBankId, kind: 'digital', description: 'Digital / online sales', credit: digital, debit: 0 });
+  // Card / digital sales: per-bank amounts from settlements, plus the older single-account fields.
+  const payTotals = new Map<string, number>();
+  const addPay = (key: string, amount: number) => payTotals.set(key, (payTotals.get(key) || 0) + (amount || 0));
+  for (const st of day.settlements) {
+    addPay(paymentKey('card', data.settings.cardBankId), st.cardSales);
+    addPay(paymentKey('digital', data.settings.digitalBankId), st.digitalSales);
+    for (const [key, amount] of Object.entries(st.payments || {})) addPay(key, amount);
+  }
+  for (const [key, amount] of payTotals) {
+    const { kind, bankId } = parsePaymentKey(key);
+    const description = kind === 'card' ? 'Card (POS) sales' : 'Digital / online sales';
+    mv({ bankId, kind, description, credit: round2(amount), debit: 0 });
+  }
   const customers = new Map(data.customers.map((c) => [c.id, c]));
   for (const r of day.creditReceipts)
     if (r.mode === 'bank' && r.bankId)
@@ -364,6 +414,7 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
   return {
     date: day.date,
     nozzles: nozzleLines,
+    units: [...unitMap.values()],
     stock,
     salesmen,
     fuelLitres,
@@ -535,6 +586,7 @@ export interface PeriodReport {
   shortExcess: number;
   byProduct: { productId: string; sold: number; amount: number; received: number; variance: number }[];
   bySalesman: SalesmanRow[];
+  byUnit: UnitRow[];
   expenseHeads: { head: string; amount: number }[];
   daily: DaySummary[];
 }
@@ -544,7 +596,14 @@ export function periodReport(data: AppData, ledger: Ledger, from: string, to: st
   const prod = new Map<string, { productId: string; sold: number; amount: number; received: number; variance: number }>();
   const sm = new Map<string, SalesmanRow>();
   const heads = new Map<string, number>();
+  const units = new Map<string, UnitRow>();
   for (const s of daily) {
+    for (const u of s.units) {
+      const a = units.get(u.unitId) || { unitId: u.unitId, litres: 0, amount: 0 };
+      a.litres = round2(a.litres + u.litres);
+      a.amount = round2(a.amount + u.amount);
+      units.set(u.unitId, a);
+    }
     for (const r of s.stock) {
       const p = prod.get(r.productId) || { productId: r.productId, sold: 0, amount: 0, received: 0, variance: 0 };
       p.sold = round2(p.sold + r.sold);
@@ -586,6 +645,7 @@ export function periodReport(data: AppData, ledger: Ledger, from: string, to: st
     shortExcess: total((s) => s.shortExcess),
     byProduct: [...prod.values()].filter((p) => p.sold || p.received || p.variance),
     bySalesman: [...sm.values()],
+    byUnit: [...units.values()],
     expenseHeads: [...heads.entries()].map(([head, amount]) => ({ head, amount })).sort((a, b) => b.amount - a.amount),
     daily,
   };

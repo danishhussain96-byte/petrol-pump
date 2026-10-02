@@ -47,7 +47,9 @@ function names(data: AppData) {
   const n = new Map(data.nozzles.map((x) => [x.id, x.name]));
   const b = new Map(data.banks.map((x) => [x.id, x.name]));
   const c = new Map(data.customers.map((x) => [x.id, x.name]));
+  const u = new Map(data.units.map((x) => [x.id, x.name]));
   return {
+    unit: (id: string) => u.get(id) ?? 'No dispenser',
     product: (id: string) => p.get(id) ?? '—',
     salesman: (id: string) => (id === COUNTER ? 'Counter' : s.get(id) ?? '—'),
     nozzle: (id: string) => n.get(id) ?? '—',
@@ -64,14 +66,15 @@ export function dayReportHtml(data: AppData, s: DaySummary): string {
   let b = '';
   b += '<h2>Meter readings</h2>';
   b += table(
-    ['Nozzle', 'Product', 'Salesman', 'Opening', 'Closing', 'Test', 'Litres', 'Rate', 'Amount'],
+    ['Dispenser', 'Nozzle', 'Product', 'Salesman', 'Opening', 'Closing', 'Test', 'Litres', 'Rate', 'Amount'],
     [
-      ...s.nozzles.map((l) => [N.nozzle(l.nozzleId), N.product(l.productId), N.salesman(l.salesmanId), l.opening, l.closing, l.testLitres, l.litres, l.rate, l.amount]),
-      ['Total', '', '', '', '', '', s.fuelLitres, '', s.fuelAmount],
+      ...s.nozzles.map((l) => [N.unit(l.unitId), N.nozzle(l.nozzleId), N.product(l.productId), N.salesman(l.salesmanId), l.opening, l.closing, l.testLitres, l.litres, l.rate, l.amount]),
+      ['Total', '', '', '', '', '', '', s.fuelLitres, '', s.fuelAmount],
     ],
-    3,
+    4,
     true,
   );
+  if (s.units.length > 1) b += table(['Dispenser', 'Litres', 'Amount'], s.units.map((x) => [N.unit(x.unitId), x.litres, x.amount]));
   b += '<h2>Salesman settlement</h2>';
   b += table(
     ['Salesman', 'Litres', 'Sale', 'Credit', 'Card', 'Digital', 'Cash due', 'Received', 'Short/Excess'],
@@ -166,6 +169,10 @@ export function periodReportHtml(data: AppData, r: PeriodReport): string {
   );
   b += '<h2>Product-wise</h2>';
   b += table(['Product', 'Received', 'Sold', 'Amount', 'Gain/Loss'], r.byProduct.map((p) => [N.product(p.productId), p.received, p.sold, p.amount, p.variance]));
+  if (r.byUnit.length) {
+    b += '<h2>Dispenser-wise</h2>';
+    b += table(['Dispenser', 'Litres', 'Amount'], r.byUnit.map((x) => [N.unit(x.unitId), x.litres, x.amount]));
+  }
   b += '<h2>Salesman-wise</h2>';
   b += table(
     ['Salesman', 'Litres', 'Sale', 'Credit', 'Card', 'Digital', 'Received', 'Short/Excess'],
