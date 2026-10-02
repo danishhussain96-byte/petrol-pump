@@ -113,6 +113,21 @@ export function dayReportHtml(data: AppData, s: DaySummary): string {
     b += '<h2>Expenses</h2>';
     b += table(['Head', 'Mode', 'Note', 'Amount'], [...day.expenses.map((e) => [e.head, e.mode, e.note, e.amount]), ['Total', '', '', s.expenses]], 3, true);
   }
+  if (s.unitCash.length) {
+    b += '<h2>Dispenser cash → bank</h2>';
+    b += table(
+      ['Dispenser', 'Pending b/f', 'Collected', 'Deposited', 'Where', 'Pending c/f'],
+      s.unitCash.map((u) => [
+        u.unitId ? N.unit(u.unitId) : 'Not tied to a dispenser',
+        u.opening,
+        u.collected,
+        u.deposited,
+        u.deposits.map((d) => `${N.bank(d.bankId)}${d.cross ? ' (cross)' : ''}`).join(', '),
+        u.closing,
+      ]),
+      1,
+    );
+  }
   if (s.bankMoves.length) {
     b += '<h2>Bank</h2>';
     b += table(['Bank', 'Description', 'Credit', 'Debit'], s.bankMoves.map((m) => [N.bank(m.bankId), m.description, m.credit, m.debit]), 2);
@@ -180,6 +195,21 @@ export function periodReportHtml(data: AppData, r: PeriodReport): string {
   if (r.byUnit.length) {
     b += '<h2>Dispenser-wise</h2>';
     b += table(['Dispenser', 'Litres', 'Amount'], r.byUnit.map((x) => [N.unit(x.unitId), x.litres, x.amount]));
+  }
+  if (r.unitCash.length) {
+    b += '<h2>Dispenser cash → bank</h2>';
+    b += table(
+      ['Dispenser', 'Collected', 'Deposited', 'Cross', 'By bank', 'Pending'],
+      r.unitCash.map((u) => [
+        u.unitId ? N.unit(u.unitId) : 'Not tied to a dispenser',
+        u.collected,
+        u.deposited,
+        u.cross,
+        u.byBank.map((x) => `${N.bank(x.bankId)} ${num(x.amount)}`).join(', '),
+        u.pending,
+      ]),
+      1,
+    );
   }
   b += '<h2>Salesman-wise</h2>';
   b += table(

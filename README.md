@@ -9,7 +9,8 @@ stored on the phone, and the app works without internet.
 
 | Area | What it does |
 |---|---|
-| **Dispensers & nozzles** | Starts with 3 dispensing units × 4 nozzles (2 petrol + 2 diesel each), all editable. Each dispenser has its own card (POS) and digital bank account |
+| **Dispensers & nozzles** | Starts with 3 dispensing units × 4 nozzles (2 petrol + 2 diesel each), all editable. Each dispenser has its **own bank account** for its cash, and card (POS) / digital accounts (default: the same bank) |
+| **Dispenser cash → bank** | Cash from salesmen is split by their sales on each dispenser. Each dispenser shows collected, deposited and **still to deposit** (carried day to day), with one-tap deposit. Depositing one dispenser's cash into another's bank is marked as a **cross deposit**; **transfers** between your own accounts post to both banks |
 | **Meter readings** | Grouped by dispenser. Opening and closing reading for each nozzle (opening carries forward from the previous day), test/return litres, one salesman for a whole dispenser or per nozzle, and per-day rate overrides |
 | **Salesman sales** | Litres and amount per salesman, minus credit, card (POS) and digital sales (entered per bank account of the dispensers they worked), gives **cash due**. Enter the cash received and the app shows **Short / Excess** |
 | **Lube / items** | Counter sales of engine oil, filters and other items, tracked per salesman |

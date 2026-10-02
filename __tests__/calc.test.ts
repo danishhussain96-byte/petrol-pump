@@ -223,3 +223,72 @@ test('day opened before rates were set follows the product rate', () => {
   data.products.find((p) => p.id === 'petrol')!.rate = 270;
   assert.equal(computeLedger(data).summaries[d.date].fuelAmount, 2700);
 });
+
+test('dispenser cash → its bank: split by sales, cross deposits, pending carried, transfers', () => {
+  const data = defaultData();
+  data.products.find((p) => p.id === 'petrol')!.rate = 100;
+  data.banks = [
+    { id: 'hbl', name: 'HBL', accountNo: '', openingBalance: 0, active: true },
+    { id: 'mzn', name: 'Meezan', accountNo: '', openingBalance: 0, active: true },
+  ];
+  data.units[0].bankId = 'hbl'; // Dispenser 1 → HBL
+  data.units[1].bankId = 'mzn'; // Dispenser 2 → Meezan
+  data.salesmen = [{ id: 'ali', name: 'Ali', phone: '', active: true }];
+  // card on Dispenser 2 falls back to its own bank
+  assert.equal(payBankFor(data, 'card', 'du2n1'), 'mzn');
+
+  // Day 1: Ali sells Rs 30,000 on D1 and Rs 10,000 on D2, hands over 40,000 cash
+  const d1 = newDay(data, '2026-10-01', initialCarry(data));
+  d1.readings = d1.readings.map((r) =>
+    r.nozzleId === 'du1n1' ? { ...r, closing: 300, salesmanId: 'ali' } : r.nozzleId === 'du2n1' ? { ...r, closing: 100, salesmanId: 'ali' } : r,
+  );
+  d1.settlements.push({ salesmanId: 'ali', cardSales: 0, digitalSales: 0, cashReceived: 40000 });
+  d1.bankTxns.push({ id: 'a', bankId: 'hbl', type: 'deposit', amount: 20000, unitId: 'du1', ref: '', note: '' });
+  // Dispenser 2 cash deposited into HBL: cross
+  d1.bankTxns.push({ id: 'b', bankId: 'hbl', type: 'deposit', amount: 10000, unitId: 'du2', ref: '', note: '' });
+  data.days[d1.date] = d1;
+
+  // Day 2: rest of Dispenser 1 cash deposited; then HBL → Meezan transfer
+  const d2 = newDay(data, '2026-10-02', initialCarry(data));
+  d2.bankTxns.push({ id: 'c', bankId: 'hbl', type: 'deposit', amount: 10000, unitId: 'du1', ref: '', note: '' });
+  d2.bankTxns.push({ id: 'd', bankId: 'hbl', type: 'transfer', toBankId: 'mzn', amount: 10000, ref: '', note: '' });
+  data.days[d2.date] = d2;
+
+  const l = computeLedger(data);
+  const u1 = l.summaries['2026-10-01'].unitCash;
+  assert.deepEqual(
+    u1.map((u) => [u.unitId, u.collected, u.deposited, u.closing]),
+    [['du1', 30000, 20000, 10000], ['du2', 10000, 10000, 0]],
+  );
+  assert.equal(u1[1].deposits[0].cross, true);
+  assert.equal(u1[0].deposits[0].cross, false);
+  assert.match(l.summaries['2026-10-01'].bankMoves[1].description, /Dispenser 2 \(cross\)/);
+
+  const u2 = l.summaries['2026-10-02'].unitCash;
+  assert.deepEqual(u2.map((u) => [u.unitId, u.opening, u.deposited, u.closing]), [['du1', 10000, 10000, 0]]);
+
+  // HBL: 20,000 + 10,000 + 10,000 − 10,000 transfer; Meezan: +10,000 transfer
+  assert.equal(bankStatement(data, l, 'hbl', '2026-10-01', '2026-10-02').closing, 30000);
+  assert.equal(bankStatement(data, l, 'mzn', '2026-10-01', '2026-10-02').closing, 10000);
+  // transfer does not touch cash in hand: 40,000 in − 40,000 deposited
+  assert.equal(l.summaries['2026-10-02'].cash.closing, 0);
+
+  const rep = periodReport(data, l, '2026-10-01', '2026-10-02');
+  assert.deepEqual(
+    rep.unitCash.map((u) => [u.unitId, u.collected, u.deposited, u.cross, u.pending]),
+    [['du1', 30000, 30000, 0, 0], ['du2', 10000, 10000, 10000, 0]],
+  );
+});
+
+test('lube cash and deposits without a dispenser stay unassigned', () => {
+  const data = defaultData();
+  data.products.find((p) => p.id === 'mobiloil')!.rate = 1000;
+  data.banks = [{ id: 'hbl', name: 'HBL', accountNo: '', openingBalance: 0, active: true }];
+  const d = newDay(data, '2026-10-01', initialCarry(data));
+  d.itemSales.push({ id: 'i', productId: 'mobiloil', qty: 2 });
+  d.settlements.push({ salesmanId: '', cardSales: 0, digitalSales: 0, cashReceived: 2000 });
+  d.bankTxns.push({ id: 'x', bankId: 'hbl', type: 'deposit', amount: 1500, ref: '', note: '' });
+  data.days[d.date] = d;
+  const s = computeLedger(data).summaries[d.date];
+  assert.deepEqual(s.unitCash.map((u) => [u.unitId, u.collected, u.deposited, u.closing]), [['', 2000, 1500, 500]]);
+});

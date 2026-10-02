@@ -253,13 +253,16 @@ function StatementDetail({ st, onBack }: { st: SavedStatement; onBack: () => voi
   const { data, ledger, update, updateDay } = useStore();
   const L = useLookups();
   const [filter, setFilter] = useState<Filter>('missing');
-  const [adding, setAdding] = useState<{ index: number; type: BankTxnType } | null>(null);
+  const [adding, setAdding] = useState<{ index: number; type: BankTxnType; unitId?: string } | null>(null);
+  // Dispenser whose own bank is this account (only when exactly one) — default for deposits.
+  const ownUnits = data.units.filter((u) => u.bankId === st.bankId);
+  const defaultUnit = ownUnits.length === 1 ? ownUnits[0].id : undefined;
   const s = useMemo(() => summarize(st.lines, st.openingBalance), [st]);
   const rec = useMemo(() => reconcile(ledger, st.bankId, st.lines), [ledger, st]);
   const appBalance = s.to ? bankBalance(data, ledger, st.bankId, s.to) : 0;
   const missingCredits = st.lines.map((l, i) => ({ l, i })).filter(({ l, i }) => rec.match[i] < 0 && l.credit > 0);
 
-  const addLine = (line: StatementLine, type: BankTxnType) => {
+  const addLine = (line: StatementLine, type: BankTxnType, unitId?: string) => {
     if (data.days[line.date]?.locked) {
       Alert.alert('Day is locked', `Unlock ${prettyDate(line.date)} in Daily → Summary first.`);
       return;
@@ -268,7 +271,15 @@ function StatementDetail({ st, onBack }: { st: SavedStatement; onBack: () => voi
       ...d,
       bankTxns: [
         ...d.bankTxns,
-        { id: uid(), bankId: st.bankId, type, amount: line.credit || line.debit, ref: 'Statement', note: line.description.slice(0, 80) },
+        {
+          id: uid(),
+          bankId: st.bankId,
+          type,
+          amount: line.credit || line.debit,
+          ref: 'Statement',
+          note: line.description.slice(0, 80),
+          ...(type === 'deposit' && unitId ? { unitId } : {}),
+        },
       ],
     }));
   };
@@ -347,7 +358,7 @@ function StatementDetail({ st, onBack }: { st: SavedStatement; onBack: () => voi
             onPress={() =>
               confirm(
                 `Add ${missingCredits.length} deposits (${L.cur} ${num(missingCredits.reduce((a, x) => a + x.l.credit, 0))}) as cash deposited from the station? This lowers cash in hand on those days. Card / online settlements should be added one by one as "Amount received" instead.`,
-                () => missingCredits.forEach(({ l }) => addLine(l, 'deposit')),
+                () => missingCredits.forEach(({ l }) => addLine(l, 'deposit', defaultUnit)),
                 'Add all',
               )
             }
@@ -359,7 +370,7 @@ function StatementDetail({ st, onBack }: { st: SavedStatement; onBack: () => voi
             <LineRow
               line={l}
               status={rec.match[i] >= 0 ? 'matched' : 'missing'}
-              onAdd={() => setAdding({ index: i, type: l.credit ? 'deposit' : 'debit' })}
+              onAdd={() => setAdding({ index: i, type: l.credit ? 'deposit' : 'debit', unitId: defaultUnit })}
             />
             {adding?.index === i ? (
               <View style={{ backgroundColor: C.chip, padding: 8, borderRadius: 8, marginBottom: 6 }}>
@@ -367,8 +378,17 @@ function StatementDetail({ st, onBack }: { st: SavedStatement; onBack: () => voi
                   label={`Add to ${prettyDate(l.date)} as`}
                   value={adding.type}
                   options={l.credit ? CREDIT_TYPES : DEBIT_TYPES}
-                  onChange={(v) => setAdding({ index: i, type: (v as BankTxnType) || adding.type })}
+                  onChange={(v) => setAdding({ ...adding, type: (v as BankTxnType) || adding.type })}
                 />
+                {adding.type === 'deposit' && data.units.length ? (
+                  <Select
+                    label="Cash of dispenser"
+                    value={adding.unitId}
+                    options={L.opt.units}
+                    allowNone="— Not specified —"
+                    onChange={(v) => setAdding({ ...adding, unitId: v })}
+                  />
+                ) : null}
                 <HStack style={{ marginTop: 8 }}>
                   <Btn title="Cancel" kind="ghost" small onPress={() => setAdding(null)} />
                   <Btn
@@ -376,7 +396,7 @@ function StatementDetail({ st, onBack }: { st: SavedStatement; onBack: () => voi
                     small
                     style={{ flex: 1 }}
                     onPress={() => {
-                      addLine(l, adding.type);
+                      addLine(l, adding.type, adding.unitId);
                       setAdding(null);
                     }}
                   />

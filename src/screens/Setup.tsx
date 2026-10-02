@@ -173,7 +173,11 @@ function Units() {
       // Keep the nozzles (they have meter history) but detach them.
       nozzles: d.nozzles.map((z) => (z.unitId === id ? { ...z, unitId: undefined } : z)),
     }));
-  const bankLabel = (id?: string, fallback?: string) => (id ? L.bankName(id) : fallback ? `${L.bankName(fallback)} (default)` : 'not posted');
+  const bankLabel = (id?: string, ...fallbacks: (string | undefined)[]) => {
+    if (id) return L.bankName(id);
+    const fb = fallbacks.find(Boolean);
+    return fb ? `${L.bankName(fb)} (default)` : 'not posted';
+  };
   return (
     <>
       <Card title="Dispensing units" right={<Btn title="+ Add (4 nozzles)" small onPress={addUnit} />}>
@@ -182,12 +186,14 @@ function Units() {
           <ListItem
             key={u.id}
             title={`${u.name}${u.active ? '' : ' (inactive)'}`}
-            sub={`${data.nozzles.filter((z) => z.unitId === u.id).length} nozzles · Card → ${bankLabel(u.cardBankId, data.settings.cardBankId)} · Digital → ${bankLabel(u.digitalBankId, data.settings.digitalBankId)}`}
+            sub={`${data.nozzles.filter((z) => z.unitId === u.id).length} nozzles · Cash → ${u.bankId ? L.bankName(u.bankId) : 'not set'} · Card → ${bankLabel(u.cardBankId, u.bankId, data.settings.cardBankId)} · Digital → ${bankLabel(u.digitalBankId, u.bankId, data.settings.digitalBankId)}`}
             onPress={() => setEd(u)}
           />
         ))}
       </Card>
-      <Muted>Set the bank account each dispenser's POS machine and wallet pay into. Card / digital sales then post to that bank automatically.</Muted>
+      <Muted>
+        Give each dispenser its own bank account. Its cash deposits are tracked against that account, and card / digital sales post there automatically. A deposit into another dispenser's bank is marked as a cross deposit.
+      </Muted>
       {ed ? (
         <EditModal
           title={ed.name || 'Dispenser'}
@@ -201,8 +207,9 @@ function Units() {
           onDelete={items.some((x) => x.id === ed.id) ? () => (removeUnit(ed.id), setEd(null)) : undefined}
         >
           <Field label="Name" value={ed.name} onChange={(t) => setEd({ ...ed, name: t })} />
-          <Select label="Card (POS) sales go to" value={ed.cardBankId} options={L.opt.banks} allowNone="— Use default from Settings —" onChange={(v) => setEd({ ...ed, cardBankId: v })} />
-          <Select label="Digital / online sales go to" value={ed.digitalBankId} options={L.opt.banks} allowNone="— Use default from Settings —" onChange={(v) => setEd({ ...ed, digitalBankId: v })} />
+          <Select label="Bank account of this dispenser (cash deposits)" value={ed.bankId} options={L.opt.banks} allowNone="— Not set —" onChange={(v) => setEd({ ...ed, bankId: v })} />
+          <Select label="Card (POS) sales go to" value={ed.cardBankId} options={L.opt.banks} allowNone="— Same as dispenser's bank —" onChange={(v) => setEd({ ...ed, cardBankId: v })} />
+          <Select label="Digital / online sales go to" value={ed.digitalBankId} options={L.opt.banks} allowNone="— Same as dispenser's bank —" onChange={(v) => setEd({ ...ed, digitalBankId: v })} />
           {L.opt.banks.length === 0 ? <Muted style={{ marginTop: 6 }}>Add bank accounts first (Setup → Bank accounts).</Muted> : null}
           <ActiveSwitch value={ed.active} onChange={(v) => setEd({ ...ed, active: v })} />
         </EditModal>

@@ -24,13 +24,33 @@ export function payBankFor(data: AppData, kind: PayKind, nozzleId: string | unde
   const nz = nozzleId ? data.nozzles.find((n) => n.id === nozzleId) : undefined;
   const unit = nz?.unitId ? data.units.find((u) => u.id === nz.unitId) : undefined;
   const own = kind === 'card' ? unit?.cardBankId : unit?.digitalBankId;
-  return own || (kind === 'card' ? data.settings.cardBankId : data.settings.digitalBankId) || '';
+  return own || unit?.bankId || (kind === 'card' ? data.settings.cardBankId : data.settings.digitalBankId) || '';
 }
 
 export interface UnitRow {
   unitId: string;
   litres: number;
   amount: number;
+}
+
+export interface UnitDeposit {
+  bankId: string;
+  amount: number;
+  /** Deposited into a bank other than the dispenser's own. */
+  cross: boolean;
+}
+
+/** Cash of one dispenser: collected from its salesmen and deposited to bank. unitId '' = not tied to a dispenser. */
+export interface UnitCashRow {
+  unitId: string;
+  /** Not yet deposited from earlier days. */
+  opening: number;
+  /** Cash received from salesmen for this dispenser's sales (split by their fuel sales on each dispenser). */
+  collected: number;
+  deposited: number;
+  deposits: UnitDeposit[];
+  /** Still to deposit, carried to the next day. */
+  closing: number;
 }
 
 export interface NozzleLine {
@@ -106,6 +126,7 @@ export interface DaySummary {
   date: string;
   nozzles: NozzleLine[];
   units: UnitRow[];
+  unitCash: UnitCashRow[];
   stock: StockRow[];
   salesmen: SalesmanRow[];
   fuelLitres: number;
@@ -134,6 +155,8 @@ export interface Carry {
   stock: Record<string, number>;
   /** Running average cost per unit, by productId (0 = not known yet). */
   cost: Record<string, number>;
+  /** Dispenser cash collected but not yet deposited, by unitId. */
+  pending: Record<string, number>;
   cash: number;
   meters: Record<string, number>;
 }
@@ -189,7 +212,7 @@ export function initialCarry(data: AppData): Carry {
   }
   const meters: Record<string, number> = {};
   for (const n of data.nozzles) meters[n.id] = n.openingReading || 0;
-  return { stock, cost, cash: data.settings.openingCash || 0, meters };
+  return { stock, cost, pending: {}, cash: data.settings.openingCash || 0, meters };
 }
 
 export function countedCash(day: DayRecord): number {
@@ -379,10 +402,22 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
     credit: 'Amount received',
     debit: 'Payment',
     charges: 'Bank charges',
+    transfer: 'Transfer',
   };
+  const units = new Map(data.units.map((u) => [u.id, u]));
+  const bankName = (id?: string) => data.banks.find((b) => b.id === id)?.name ?? 'other account';
   for (const t of day.bankTxns) {
+    if (t.type === 'transfer') {
+      const extra = [t.ref, t.note].filter(Boolean).join(' · ');
+      mv({ bankId: t.bankId, kind: 'transfer', description: `Transfer to ${bankName(t.toBankId)}${extra ? ' · ' + extra : ''}`, credit: 0, debit: t.amount || 0 });
+      if (t.toBankId)
+        mv({ bankId: t.toBankId, kind: 'transfer', description: `Transfer from ${bankName(t.bankId)}${extra ? ' · ' + extra : ''}`, credit: t.amount || 0, debit: 0 });
+      continue;
+    }
     const isCredit = t.type === 'deposit' || t.type === 'credit';
-    const desc = [TXN_LABEL[t.type], t.ref, t.note].filter(Boolean).join(' · ');
+    const unit = t.type === 'deposit' && t.unitId ? units.get(t.unitId) : undefined;
+    const cross = unit && unit.bankId && unit.bankId !== t.bankId ? ' (cross)' : '';
+    const desc = [TXN_LABEL[t.type] + (unit ? ` · ${unit.name}${cross}` : ''), t.ref, t.note].filter(Boolean).join(' · ');
     mv({
       bankId: t.bankId,
       kind: t.type,
@@ -427,6 +462,43 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
         debit: round2(purchaseAmount(p)),
       });
 
+  // ---- Dispenser cash → bank
+  // Each salesman's cash is split over the dispensers he worked, by his fuel sales on each;
+  // lube / counter sales stay unassigned ('').
+  const collected = new Map<string, number>();
+  const addCollected = (u: string, v: number) => collected.set(u, (collected.get(u) || 0) + v);
+  for (const r of salesmen) {
+    if (!r.cashReceived) continue;
+    let assigned = 0;
+    if (r.saleAmount > 0) {
+      const byUnit = new Map<string, number>();
+      for (const l of nozzleLines) if (l.salesmanId === r.salesmanId && l.unitId) byUnit.set(l.unitId, (byUnit.get(l.unitId) || 0) + l.amount);
+      for (const [u, amt] of byUnit) {
+        const share = round2((r.cashReceived * amt) / r.saleAmount);
+        addCollected(u, share);
+        assigned += share;
+      }
+    }
+    if (Math.abs(r.cashReceived - assigned) >= 0.005) addCollected('', round2(r.cashReceived - assigned));
+  }
+  const unitDeposits = new Map<string, UnitDeposit[]>();
+  for (const t of day.bankTxns) {
+    if (t.type !== 'deposit') continue;
+    const u = t.unitId && units.has(t.unitId) ? t.unitId : '';
+    const own = u ? units.get(u)?.bankId : undefined;
+    const list = unitDeposits.get(u) ?? unitDeposits.set(u, []).get(u)!;
+    list.push({ bankId: t.bankId, amount: t.amount || 0, cross: !!own && own !== t.bankId });
+  }
+  const unitCash: UnitCashRow[] = [];
+  for (const unitId of [...data.units.map((u) => u.id), '']) {
+    const opening = round2(carry.pending?.[unitId] || 0);
+    const col = round2(collected.get(unitId) || 0);
+    const deps = unitDeposits.get(unitId) ?? [];
+    const deposited = round2(sum(deps, (d) => d.amount));
+    if (!opening && !col && !deposited) continue;
+    unitCash.push({ unitId, opening, collected: col, deposited, deposits: deps, closing: round2(opening + col - deposited) });
+  }
+
   // ---- Profit
   const expenses = round2(sum(day.expenses, (e) => e.amount));
   // Products whose cost is not known yet are left out of the margin instead of counting as pure profit.
@@ -440,6 +512,7 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
     date: day.date,
     nozzles: nozzleLines,
     units: [...unitMap.values()],
+    unitCash,
     stock,
     salesmen,
     fuelLitres,
@@ -466,13 +539,15 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
 export function nextCarry(carry: Carry, day: DayRecord, s: DaySummary): Carry {
   const stock = { ...carry.stock };
   const cost = { ...carry.cost };
+  const pending = { ...(carry.pending || {}) };
+  for (const u of s.unitCash) pending[u.unitId] = u.closing;
   for (const r of s.stock) {
     stock[r.productId] = r.closing;
     cost[r.productId] = r.costRate;
   }
   const meters = { ...carry.meters };
   for (const r of day.readings) if (r.closing) meters[r.nozzleId] = r.closing;
-  return { stock, cost, cash: s.cash.closing, meters };
+  return { stock, cost, pending, cash: s.cash.closing, meters };
 }
 
 export interface Ledger {
@@ -617,6 +692,8 @@ export interface PeriodReport {
   byProduct: { productId: string; sold: number; amount: number; received: number; variance: number }[];
   bySalesman: SalesmanRow[];
   byUnit: UnitRow[];
+  /** Per dispenser over the period: cash collected, deposited (and how much cross), still pending at the end. */
+  unitCash: { unitId: string; collected: number; deposited: number; cross: number; pending: number; byBank: { bankId: string; amount: number }[] }[];
   expenseHeads: { head: string; amount: number }[];
   daily: DaySummary[];
 }
@@ -627,7 +704,21 @@ export function periodReport(data: AppData, ledger: Ledger, from: string, to: st
   const sm = new Map<string, SalesmanRow>();
   const heads = new Map<string, number>();
   const units = new Map<string, UnitRow>();
+  const cash = new Map<string, PeriodReport['unitCash'][number]>();
   for (const s of daily) {
+    for (const u of s.unitCash) {
+      const a = cash.get(u.unitId) || { unitId: u.unitId, collected: 0, deposited: 0, cross: 0, pending: 0, byBank: [] };
+      a.collected = round2(a.collected + u.collected);
+      a.deposited = round2(a.deposited + u.deposited);
+      a.pending = u.closing;
+      for (const d of u.deposits) {
+        if (d.cross) a.cross = round2(a.cross + d.amount);
+        const b = a.byBank.find((x) => x.bankId === d.bankId);
+        if (b) b.amount = round2(b.amount + d.amount);
+        else a.byBank.push({ bankId: d.bankId, amount: d.amount });
+      }
+      cash.set(u.unitId, a);
+    }
     for (const u of s.units) {
       const a = units.get(u.unitId) || { unitId: u.unitId, litres: 0, amount: 0 };
       a.litres = round2(a.litres + u.litres);
@@ -676,6 +767,7 @@ export function periodReport(data: AppData, ledger: Ledger, from: string, to: st
     byProduct: [...prod.values()].filter((p) => p.sold || p.received || p.variance),
     bySalesman: [...sm.values()],
     byUnit: [...units.values()],
+    unitCash: [...cash.values()],
     expenseHeads: [...heads.entries()].map(([head, amount]) => ({ head, amount })).sort((a, b) => b.amount - a.amount),
     daily,
   };

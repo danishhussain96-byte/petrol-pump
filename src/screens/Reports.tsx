@@ -4,7 +4,7 @@ import { periodReport } from '../calc';
 import { useLookups } from '../hooks';
 import { periodReportHtml, shareHtml } from '../report';
 import { useStore } from '../store';
-import { Btn, Card, Chip, Divider, Empty, Field, HStack, ListItem, Row, Screen, Stat, diffColor, diffText } from '../ui';
+import { Btn, C, Card, Chip, Divider, Empty, Field, HStack, ListItem, Row, Screen, Stat, diffColor, diffText } from '../ui';
 import { addDays, isValidDate, monthStart, num, prettyDate, todayStr } from '../utils';
 
 export function Reports({ openDay }: { openDay: (d: string) => void }) {
@@ -73,6 +73,20 @@ export function Reports({ openDay }: { openDay: (d: string) => void }) {
             <Card title="Dispenser-wise">
               {r.byUnit.map((u) => (
                 <Row key={u.unitId || 'none'} label={L.unitName(u.unitId)} value={`${num(u.litres)} L · ${L.cur} ${num(u.amount)}`} />
+              ))}
+            </Card>
+          ) : null}
+          {r.unitCash.length ? (
+            <Card title="Dispenser cash → bank">
+              {r.unitCash.map((u) => (
+                <View key={u.unitId || 'none'} style={{ paddingVertical: 6, borderBottomWidth: 1, borderColor: '#EEF2F6' }}>
+                  <Row label={u.unitId ? L.unitName(u.unitId) : 'Not tied to a dispenser'} value={`${num(u.deposited)} of ${num(u.collected)}`} bold />
+                  {u.byBank.map((b) => (
+                    <Row key={b.bankId} small label={`  in ${L.bankName(b.bankId)}`} value={num(b.amount)} />
+                  ))}
+                  {u.cross ? <Row small label="  of which cross deposits" value={num(u.cross)} color={C.accent} /> : null}
+                  {Math.abs(u.pending) > 0.004 ? <Row small label="  Pending at end of period" value={num(u.pending)} color={u.pending > 0 ? C.red : C.accent} /> : null}
+                </View>
               ))}
             </Card>
           ) : null}

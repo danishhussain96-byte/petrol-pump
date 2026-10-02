@@ -48,9 +48,11 @@ export interface Product {
 export interface DispensingUnit {
   id: string;
   name: string;
-  /** Bank account its card (POS) machine pays into. Falls back to Settings when empty. */
+  /** Main bank account of this dispenser: its cash is deposited here. Also the default for card / digital. */
+  bankId?: string;
+  /** Bank account its card (POS) machine pays into. Falls back to the dispenser's bank, then Settings. */
   cardBankId?: string;
-  /** Bank account its digital / online payments go to. Falls back to Settings when empty. */
+  /** Bank account its digital / online payments go to. Falls back to the dispenser's bank, then Settings. */
   digitalBankId?: string;
   active: boolean;
 }
@@ -169,7 +171,7 @@ export interface Expense {
   note: string;
 }
 
-export type BankTxnType = 'deposit' | 'withdrawal' | 'credit' | 'debit' | 'charges';
+export type BankTxnType = 'deposit' | 'withdrawal' | 'credit' | 'debit' | 'charges' | 'transfer';
 
 /**
  * Manual bank transactions.
@@ -178,12 +180,17 @@ export type BankTxnType = 'deposit' | 'withdrawal' | 'credit' | 'debit' | 'charg
  * credit     — other money received in bank (transfer in, profit) — no cash effect
  * debit      — other payment from bank (cheque, transfer out) — no cash effect
  * charges    — bank charges / taxes deducted — no cash effect
+ * transfer   — moved from bankId to toBankId (between own accounts) — no cash effect
  */
 export interface BankTxn {
   id: string;
   bankId: string;
   type: BankTxnType;
   amount: number;
+  /** Deposit: the dispenser whose cash this is. Into another dispenser's bank = cross deposit. */
+  unitId?: string;
+  /** Transfer: the receiving account. */
+  toBankId?: string;
   ref: string;
   note: string;
 }

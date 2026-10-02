@@ -4,7 +4,8 @@ import { COUNTER, DENOMINATIONS, carryFor, computeDay, parsePaymentKey, payBankF
 import { useLookups } from '../hooks';
 import { shareDayReport } from '../report';
 import { useStore } from '../store';
-import type { BankTxnType, DayRecord, NozzleReading, SalesmanSettlement } from '../types';
+import type { DayRecord, NozzleReading, SalesmanSettlement } from '../types';
+import { BankTxnForm, txnSign, txnTitle, type TxnPrefill } from './BankTxnForm';
 import {
   Btn,
   C,
@@ -647,45 +648,64 @@ function Expenses({ day, set }: SectionProps) {
 
 // ---------------- Bank ----------------
 
-export const TXN_TYPES: { value: BankTxnType; label: string; sub: string }[] = [
-  { value: 'deposit', label: 'Cash deposit', sub: 'Cash in hand → bank' },
-  { value: 'withdrawal', label: 'Cash withdrawal', sub: 'Bank → cash in hand' },
-  { value: 'credit', label: 'Amount received (transfer in)', sub: 'Bank balance increases' },
-  { value: 'debit', label: 'Payment / cheque issued', sub: 'Bank balance decreases' },
-  { value: 'charges', label: 'Bank charges / tax', sub: 'Bank balance decreases' },
-];
-
 function Bank({ day, sum, set }: SectionProps) {
   const L = useLookups();
   const { data } = useStore();
-  const [t, setT] = useState({ bankId: data.banks.find((b) => b.active)?.id as string | undefined, type: 'deposit' as BankTxnType, amount: 0, ref: '', note: '' });
-  const add = () => {
-    if (!t.bankId || !t.amount) return Alert.alert('Missing', 'Select bank and enter amount.');
-    const { bankId } = t;
-    set((d) => ({ ...d, bankTxns: [...d.bankTxns, { id: uid(), ...t, bankId }] }));
-    setT({ ...t, amount: 0, ref: '', note: '' });
-  };
+  const [prefill, setPrefill] = useState<TxnPrefill>();
   if (data.banks.length === 0) return <Empty text="Add a bank account in Setup → Bank accounts first." />;
   return (
     <>
+      {sum.unitCash.length ? (
+        <Card title="Dispenser cash → bank">
+          <Muted style={{ marginBottom: 6 }}>
+            Cash received from salesmen, split by their sales on each dispenser, and what has been deposited. Pending carries to the next day.
+          </Muted>
+          {sum.unitCash.map((u) => {
+            const own = u.unitId ? L.unit.get(u.unitId)?.bankId : undefined;
+            return (
+              <View key={u.unitId || 'none'} style={{ paddingVertical: 8, borderTopWidth: 1, borderColor: '#EEF2F6' }}>
+                <Text style={{ fontWeight: '700', color: C.text }}>
+                  {u.unitId ? L.unitName(u.unitId) : 'Not tied to a dispenser'}
+                  {own ? <Text style={{ fontWeight: '400', color: C.muted }}> → {L.bankName(own)}</Text> : null}
+                </Text>
+                {u.opening ? <Row small label="Pending from earlier" value={num(u.opening)} /> : null}
+                <Row small label="+ Cash collected today" value={num(u.collected)} />
+                {u.deposits.map((d, i) => (
+                  <Row
+                    key={i}
+                    small
+                    label={`− Deposited in ${L.bankName(d.bankId)}${d.cross ? ' ⇄ cross' : ''}`}
+                    value={num(d.amount)}
+                    color={d.cross ? C.accent : undefined}
+                  />
+                ))}
+                <HStack style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Row label={u.closing > 0 ? 'Still to deposit' : u.closing < 0 ? 'Deposited more than collected' : 'All deposited ✓'} value={num(u.closing)} color={u.closing > 0.004 ? C.red : C.green} bold />
+                </HStack>
+                {u.closing > 0.004 ? (
+                  <Btn
+                    title={`Deposit ${L.cur} ${num(u.closing)}${own ? ' in ' + L.bankName(own) : ''}`}
+                    kind="secondary"
+                    small
+                    onPress={() => setPrefill({ nonce: Date.now(), type: 'deposit', unitId: u.unitId || undefined, amount: u.closing })}
+                  />
+                ) : null}
+              </View>
+            );
+          })}
+        </Card>
+      ) : null}
       <Card title="Add bank transaction">
-        <Select label="Bank account" value={t.bankId} options={L.opt.banks} onChange={(v) => setT({ ...t, bankId: v })} />
-        <Select label="Type" value={t.type} options={TXN_TYPES} onChange={(v) => setT({ ...t, type: (v as BankTxnType) || 'deposit' })} />
-        <HStack>
-          <NumInput label="Amount" value={t.amount} onChange={(v) => setT({ ...t, amount: v ?? 0 })} />
-          <Field label="Slip / cheque / ref #" value={t.ref} onChange={(x) => setT({ ...t, ref: x })} />
-        </HStack>
-        <Field label="Note" value={t.note} onChange={(x) => setT({ ...t, note: x })} />
-        <Btn title="Add transaction" onPress={add} style={{ marginTop: 10 }} />
+        <BankTxnForm date={day.date} prefill={prefill} onAdd={(_, txn) => set((d) => ({ ...d, bankTxns: [...d.bankTxns, txn] }))} />
       </Card>
       <Card title="Bank transactions entered">
         {day.bankTxns.length === 0 ? <Empty text="None" /> : null}
         {day.bankTxns.map((x) => (
           <ListItem
             key={x.id}
-            title={`${TXN_TYPES.find((y) => y.value === x.type)?.label ?? x.type}${x.ref ? ' · ' + x.ref : ''}`}
+            title={txnTitle(x, L)}
             sub={[L.bankName(x.bankId), x.note].filter(Boolean).join(' · ')}
-            right={`${x.type === 'deposit' || x.type === 'credit' ? '+' : '−'}${num(x.amount)}`}
+            right={`${txnSign(x)}${num(x.amount)}`}
             onDelete={() => set((d) => ({ ...d, bankTxns: d.bankTxns.filter((y) => y.id !== x.id) }))}
           />
         ))}
