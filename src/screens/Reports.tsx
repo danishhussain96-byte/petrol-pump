@@ -2,9 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { periodReport } from '../calc';
 import { useLookups } from '../hooks';
-import { periodReportHtml, shareHtml } from '../report';
+import { dispenserReportHtml, periodReportHtml, shareHtml } from '../report';
 import { useStore } from '../store';
-import { Btn, C, Card, Chip, Divider, Empty, Field, HStack, ListItem, Row, Screen, Stat, diffColor, diffText } from '../ui';
+import { Btn, C, Card, Chip, Divider, Empty, Field, HStack, ListItem, Muted, Row, Screen, Stat, diffColor, diffText } from '../ui';
 import { addDays, isValidDate, monthStart, num, prettyDate, todayStr } from '../utils';
 
 export function Reports({ openDay }: { openDay: (d: string) => void }) {
@@ -20,9 +20,36 @@ export function Reports({ openDay }: { openDay: (d: string) => void }) {
     setTo(t);
   };
   const lastMonthEnd = addDays(monthStart(today), -1);
+  const [pdfFrom, setPdfFrom] = useState(today);
+  const [pdfTo, setPdfTo] = useState(today);
+  const pdfDates = Object.keys(data.days).filter((d) => d >= pdfFrom && d <= pdfTo).length;
+  const sharePdf = () => {
+    if (!isValidDate(pdfFrom) || !isValidDate(pdfTo) || pdfFrom > pdfTo) return Alert.alert('Invalid date', 'Use format YYYY-MM-DD, "From" on or before "To".');
+    if (!pdfDates) return Alert.alert('Nothing saved', 'No daily entries on these dates.');
+    shareHtml(dispenserReportHtml(data, ledger, pdfFrom, pdfTo), `Dispenser sales ${pdfFrom}${pdfTo !== pdfFrom ? ' to ' + pdfTo : ''}`).catch((e) => Alert.alert('Error', String(e)));
+  };
 
   return (
     <Screen>
+      <Card title="📄 Daily sales PDF — all dispensers">
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 4 }}>
+          <Chip title="Today" active={pdfFrom === today && pdfTo === today} onPress={() => { setPdfFrom(today); setPdfTo(today); }} />
+          <Chip
+            title="Yesterday"
+            active={pdfFrom === addDays(today, -1) && pdfTo === addDays(today, -1)}
+            onPress={() => { setPdfFrom(addDays(today, -1)); setPdfTo(addDays(today, -1)); }}
+          />
+          <Chip title="This month" active={pdfFrom === monthStart(today) && pdfTo === today} onPress={() => { setPdfFrom(monthStart(today)); setPdfTo(today); }} />
+        </View>
+        <HStack>
+          <Field label="Date (YYYY-MM-DD)" value={pdfFrom} onChange={(t) => { setPdfFrom(t); if (pdfTo < t || pdfTo === pdfFrom) setPdfTo(t); }} />
+          <Field label="To (for several days)" value={pdfTo} onChange={setPdfTo} />
+        </HStack>
+        <Btn title={`📄 Download / share PDF${pdfDates > 1 ? ` (${pdfDates} days)` : ''}`} onPress={sharePdf} style={{ marginTop: 8 }} />
+        <Muted style={{ marginTop: 4 }}>
+          One PDF with every dispenser: meter readings, sale by product, cash / online / POS / credit, credit customers with vehicles, and cash → bank. Several days = one page per day.
+        </Muted>
+      </Card>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
         <Chip title="Today" onPress={() => preset(today, today)} active={from === today && to === today} />
         <Chip title="Last 7 days" onPress={() => preset(addDays(today, -6), today)} />
@@ -42,7 +69,7 @@ export function Reports({ openDay }: { openDay: (d: string) => void }) {
             <Stat label="Net profit (est.)" value={`${L.cur} ${num(r.netProfit)}`} color={diffColor(r.netProfit >= 0 ? 0 : -1)} />
             <Stat label="Short / excess" value={num(r.shortExcess)} color={diffColor(r.shortExcess)} />
           </View>
-          <Btn title="📄 Share / print PDF" onPress={() => shareHtml(periodReportHtml(data, r), 'Report').catch((e) => Alert.alert('Error', String(e)))} style={{ marginBottom: 12 }} />
+          <Btn title="📄 Period summary PDF" onPress={() => shareHtml(periodReportHtml(data, r), 'Report').catch((e) => Alert.alert('Error', String(e)))} style={{ marginBottom: 12 }} />
           <Card title="Summary">
             <Row label="Days recorded" value={String(r.days)} />
             <Row label="Fuel sales" value={num(r.fuelAmount)} />

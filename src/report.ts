@@ -1,6 +1,6 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { COUNTER, purchaseAmount, type DaySummary, type PeriodReport, type Statement } from './calc';
+import { COUNTER, purchaseAmount, type DaySummary, type Ledger, type PeriodReport, type Statement } from './calc';
 import type { AppData } from './types';
 import { num, prettyDate } from './utils';
 
@@ -18,6 +18,8 @@ h1{font-size:18px;margin:0}h2{font-size:14px;margin:18px 0 6px;color:#0B5FA5;bor
 table{width:100%;border-collapse:collapse;margin-bottom:6px}
 th,td{border:1px solid #D9E1EA;padding:4px 6px;text-align:left}th{background:#F2F5F9}
 td.n,th.n{text-align:right}tr.t td{font-weight:bold;background:#FAFBFD}
+.day{page-break-before:always}.day:first-of-type{page-break-before:auto}
+h3{font-size:13px;margin:14px 0 4px}
 .neg{color:#C62828}.pos{color:#1E8E3E}
 </style></head><body>
 <h1>${esc(st.stationName)}</h1>
@@ -177,6 +179,100 @@ export function dayReportHtml(data: AppData, s: DaySummary): string {
   );
   if (day?.notes) b += `<h2>Notes</h2><p>${esc(day.notes)}</p>`;
   return page(data, `Daily Report — ${prettyDate(s.date)}`, b);
+}
+
+/** One dispenser's day: meters, sale, money received, credit, payments taken there, cash → bank. */
+function dispenserSection(data: AppData, s: DaySummary, unitId: string): string {
+  const N = names(data);
+  const day = data.days[s.date];
+  const u = s.unitSales.find((x) => x.unitId === unitId);
+  const meters = s.nozzles.filter((l) => l.unitId === unitId);
+  const credits = (day?.creditSales ?? []).filter((c) => c.unitId === unitId);
+  const receipts = (day?.creditReceipts ?? []).filter((r) => r.unitId === unitId);
+  const cash = s.unitCash.find((x) => x.unitId === unitId);
+  let b = `<h2>${esc(N.unit(unitId))}${u?.salesmanId && u.salesmanId !== COUNTER ? ' · Salesman: ' + esc(N.salesman(u.salesmanId)) : ''}</h2>`;
+  if (!meters.length && !u && !credits.length && !receipts.length) return b + '<p class="sub">No entries.</p>';
+  if (meters.length) b += '<h3>Meter readings</h3>' + table(
+    ['Nozzle', 'Product', 'Opening', 'Closing', 'Test', 'Litres', 'Rate', 'Amount'],
+    meters.map((l) => [N.nozzle(l.nozzleId), N.product(l.productId), l.opening, l.closing, l.testLitres, l.litres, l.rate, l.amount]),
+    2,
+  );
+  if (u) {
+    b += '<h3>Sale</h3>';
+    b += table(
+      ['Product', 'Litres', 'Test', 'Rate', 'Amount'],
+      [...u.byProduct.map((x) => [N.product(x.productId), x.litres, x.testLitres, x.rate, x.amount]), ['Total sale', u.litres, '', '', u.fuelAmount]],
+      1,
+      true,
+    );
+    b += '<h3>Money received</h3>';
+    b += table(
+      ['Item', 'Amount'],
+      [['Cash', u.cash], ['Online / UPI', u.online], ['POS (card)', u.pos], ['Credit', u.credit], ['Total received', u.received], ['Sale', u.fuelAmount], ['Short / excess', diff(u.diff)]],
+    );
+  }
+  if (credits.length) {
+    b += `<h3>Credit (${credits.length})</h3>`;
+    b += table(
+      ['Customer', 'Vehicle', 'Nozzle', 'Product', 'Litres', 'Amount'],
+      [
+        ...credits.map((c) => [N.customer(c.customerId), [c.vehicleNo, c.slipNo && `slip ${c.slipNo}`].filter(Boolean).join(' '), c.nozzleId ? N.nozzle(c.nozzleId) : '', c.productId ? N.product(c.productId) : '', c.qty || '', c.amount]),
+        ['Total', '', '', '', '', credits.reduce((a, c) => a + (c.amount || 0), 0)],
+      ],
+      4,
+      true,
+    );
+  }
+  if (receipts.length) {
+    b += '<h3>Payments received from credit customers</h3>';
+    b += table(['Customer', 'Mode', 'Amount'], receipts.map((r) => [N.customer(r.customerId), r.mode === 'bank' ? `Bank: ${N.bank(r.bankId ?? '')}` : 'Cash', r.amount]), 2);
+  }
+  if (cash) {
+    b += '<h3>Cash → bank</h3>';
+    b += table(
+      ['Item', 'Amount'],
+      [
+        ['Pending from earlier', cash.opening],
+        ['+ Cash today', cash.collected],
+        ...cash.deposits.map((d) => [`− Deposited in ${N.bank(d.bankId)}${d.cross ? ' (cross)' : ''}`, d.amount]),
+        ['Still to deposit', cash.closing],
+      ],
+    );
+  }
+  return b;
+}
+
+/**
+ * Dispenser-wise daily sales for each recorded date from `from` to `to`, one page per date.
+ * `unitIds` limits it to some dispensers (default: all that are active or used that day).
+ */
+export function dispenserReportHtml(data: AppData, ledger: Ledger, from: string, to: string, unitIds?: string[]): string {
+  const N = names(data);
+  const dates = Object.keys(data.days).filter((d) => d >= from && d <= to).sort();
+  let b = '';
+  for (const date of dates) {
+    const s = ledger.summaries[date];
+    if (!s) continue;
+    const ids = unitIds?.length
+      ? unitIds
+      : [...new Set([...data.units.filter((x) => x.active).map((x) => x.id), ...s.unitSales.map((x) => x.unitId)])].filter(Boolean);
+    b += `<div class="day">${from === to ? '' : `<h1 style="font-size:15px;margin-top:10px">${esc(prettyDate(date))}</h1>`}`;
+    if (ids.length > 1) {
+      const rows = ids.map((id) => {
+        const u = s.unitSales.find((x) => x.unitId === id);
+        const credit = (data.days[date]?.creditSales ?? []).filter((c) => c.unitId === id).reduce((a, c) => a + (c.amount || 0), 0);
+        return [N.unit(id), u?.litres ?? 0, u?.fuelAmount ?? 0, u?.cash ?? 0, u?.online ?? 0, u?.pos ?? 0, u?.credit ?? credit, diff(u?.diff ?? 0)];
+      });
+      const tot = (i: number) => rows.reduce((a, r) => a + (r[i] as number), 0);
+      b += '<h2>All dispensers</h2>';
+      b += table(['Dispenser', 'Litres', 'Sale', 'Cash', 'Online', 'POS', 'Credit', 'Short / excess'], [...rows, ['Total', tot(1), tot(2), tot(3), tot(4), tot(5), tot(6), '']], 1, true);
+    }
+    for (const id of ids) b += dispenserSection(data, s, id);
+    b += '</div>';
+  }
+  if (!b) b = '<p class="sub">No entries for these dates.</p>';
+  const one = unitIds?.length === 1 ? ` — ${N.unit(unitIds[0])}` : '';
+  return page(data, `Dispenser-wise sales${one} — ${from === to ? prettyDate(from) : `${prettyDate(from)} to ${prettyDate(to)}`}`, b);
 }
 
 export function periodReportHtml(data: AppData, r: PeriodReport): string {

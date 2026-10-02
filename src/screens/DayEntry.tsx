@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { COUNTER, DENOMINATIONS, carryFor, computeDay, parsePaymentKey, payBankFor, paymentKey, purchaseAmount, rateOf, type DaySummary, type PayKind } from '../calc';
 import { useLookups } from '../hooks';
-import { shareDayReport } from '../report';
+import { dispenserReportHtml, shareDayReport, shareHtml } from '../report';
 import { useStore } from '../store';
 import type { DayRecord, NozzleReading, SalesmanSettlement } from '../types';
 import { BankTxnForm, txnSign, txnTitle, type TxnPrefill } from './BankTxnForm';
@@ -86,6 +86,16 @@ export function DayEntry({ date, setDate }: { date: string; setDate: (d: string)
           </Muted>
         </Pressable>
         <Btn title="›" kind="ghost" onPress={() => setDate(addDays(date, 1))} />
+        <Btn
+          title="📄 PDF"
+          small
+          kind="secondary"
+          onPress={() =>
+            saved
+              ? shareHtml(dispenserReportHtml(data, ledger, date, date), `Dispenser sales ${date}`).catch((e) => Alert.alert('Error', String(e)))
+              : Alert.alert('Nothing saved', `No entries for ${prettyDate(date)} yet.`)
+          }
+        />
       </View>
       {editDate !== null ? (
         <View style={{ backgroundColor: '#fff', padding: 10, borderBottomWidth: 1, borderColor: C.border }}>
