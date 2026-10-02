@@ -9,7 +9,7 @@ import { Ledgers } from './src/screens/Ledgers';
 import { Reports } from './src/screens/Reports';
 import { Setup } from './src/screens/Setup';
 import { StoreProvider, useStore } from './src/store';
-import { C, Header, PortalHost, s } from './src/ui';
+import { C, CalcHost, Header, PortalHost, s } from './src/ui';
 import { todayStr } from './src/utils';
 
 type Tab = 'home' | 'day' | 'credit' | 'reports' | 'ledgers' | 'setup';
@@ -118,9 +118,11 @@ export default function App() {
     <SafeAreaProvider>
       <StoreProvider>
         <StatusBar style="light" />
-        <PortalHost>
-          <Main />
-        </PortalHost>
+        <CalcHost>
+          <PortalHost>
+            <Main />
+          </PortalHost>
+        </CalcHost>
       </StoreProvider>
     </SafeAreaProvider>
   );

@@ -16,7 +16,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { num, parseNum } from './utils';
+import { evalExpr, isExpression, num, parseNum } from './utils';
 
 export const C = {
   primary: '#0B5FA5',
@@ -102,7 +102,7 @@ export function KeyboardScroll({
           (_x, y, _w, h) => {
             const top = offset.current;
             const bottom = top + visible;
-            if (y < top + 8 || y + h > bottom - 16) {
+            if (y < top + 8 || y + h > bottom - 16 - CALC_BAR_H) {
               sv.scrollTo({ y: Math.max(0, y - Math.max(16, (visible - h) / 3)), animated: true });
             }
           },
@@ -117,7 +117,7 @@ export function KeyboardScroll({
       <ScrollView
         ref={scrollRef}
         style={style}
-        contentContainerStyle={[contentContainerStyle, { paddingBottom: bottomPadding + kb.height }]}
+        contentContainerStyle={[contentContainerStyle, { paddingBottom: bottomPadding + kb.height + (kb.height ? CALC_BAR_H : 0) }]}
         keyboardShouldPersistTaps="handled"
         scrollEventThrottle={32}
         onScroll={(e) => (offset.current = e.nativeEvent.contentOffset.y)}
@@ -125,6 +125,48 @@ export function KeyboardScroll({
         {children}
       </ScrollView>
     </RevealCtx.Provider>
+  );
+}
+
+// ---------------- Calculator row ----------------
+// Number boxes accept sums (2000+1500-200). The phone's number keyboard has no + − × ÷,
+// so a row with them sits just above the keyboard while a number box is being typed in.
+
+const CALC_BAR_H = 46;
+type CalcTarget = { press: (key: string) => void; focused: () => boolean };
+type CalcApi = { focus: (t: CalcTarget) => void; blur: (t: CalcTarget) => void };
+const CalcCtx = createContext<CalcApi | null>(null);
+
+export function CalcHost({ children }: { children: React.ReactNode }) {
+  const [target, setTarget] = useState<CalcTarget | null>(null);
+  const kb = useKeyboard();
+  const api = useMemo<CalcApi>(
+    () => ({
+      focus: (t) => setTarget(t),
+      // Delay so a tap on the row still reaches the box that was being edited.
+      blur: (t) => setTimeout(() => !t.focused() && setTarget((cur) => (cur === t ? null : cur)), 250),
+    }),
+    [],
+  );
+  const showing = target && (kb.height > 0 || Platform.OS === 'web');
+  return (
+    <CalcCtx.Provider value={api}>
+      {children}
+      {showing ? (
+        <View
+          pointerEvents="box-none"
+          style={[StyleSheet.absoluteFill, { justifyContent: kb.height ? 'flex-start' : 'flex-end' }]}
+        >
+          <View style={[s.calcBar, kb.height ? { position: 'absolute', left: 0, right: 0, top: kb.top - CALC_BAR_H } : null]}>
+            {['+', '−', '×', '÷', '(', ')', '⌫', '='].map((k) => (
+              <Pressable key={k} onPress={() => target?.press(k)} style={({ pressed }) => [s.calcKey, k === '=' && s.calcKeyEq, pressed && { opacity: 0.6 }]}>
+                <Text style={[s.calcKeyText, k === '=' && { color: '#fff' }]}>{k}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </CalcCtx.Provider>
   );
 }
 
@@ -287,33 +329,75 @@ export function NumInput({
   allowEmpty?: boolean;
 }) {
   const { ref, onFocus } = useRevealOnFocus();
+  const calc = useContext(CalcCtx);
   const fmt = (v: number | undefined) => (v === undefined || (v === 0 && !allowEmpty) ? '' : String(v));
   const [text, setText] = useState(fmt(value));
+  // After a tap on the calculator row puts the cursor back, don't select (and overwrite) the sum.
+  const [keepCaret, setKeepCaret] = useState(false);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const valueOf = (t: string) => (t.trim() === '' ? undefined : isExpression(t) ? evalExpr(t) : parseNum(t));
   useEffect(() => {
-    const cur = text.trim() === '' ? undefined : parseNum(text);
+    const cur = valueOf(text);
     if (cur !== value && !(cur === undefined && value === 0)) setText(fmt(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
+  const apply = (t: string) => {
+    setText(t);
+    textRef.current = t;
+    if (t.trim() === '') return onChange(allowEmpty ? undefined : 0);
+    const v = valueOf(t);
+    if (v !== undefined) onChange(v);
+  };
+  /** Replaces a finished sum with its result. */
+  const settle = () => {
+    const t = textRef.current;
+    if (!isExpression(t)) return;
+    const v = evalExpr(t);
+    if (v === undefined) return;
+    setText(fmt(v));
+    textRef.current = fmt(v);
+    onChange(v);
+  };
+  const target = useRef<CalcTarget>({ press: () => {}, focused: () => false }).current;
+  target.focused = () => !!ref.current?.isFocused();
+  target.press = (k) => {
+    const t = textRef.current;
+    if (k === '=') settle();
+    else if (k === '⌫') apply(t.slice(0, -1));
+    else apply(t + (k === '−' ? '-' : k === '×' ? '*' : k === '÷' ? '/' : k));
+    // Keep typing in the same box (a tap on the row can take focus away on some phones).
+    if (k !== '=' && !ref.current?.isFocused()) {
+      setKeepCaret(true);
+      setTimeout(() => ref.current?.focus(), 0);
+    }
+  };
+  const preview = isExpression(text) ? evalExpr(text) : undefined;
   return (
     <View style={[{ flex: 1 }, style]}>
       {label ? <Label>{label}</Label> : null}
       <TextInput
         ref={ref}
-        onFocus={onFocus}
+        onFocus={() => {
+          onFocus();
+          if (editable) calc?.focus(target);
+        }}
+        onBlur={() => {
+          if (!keepCaret) settle();
+          calc?.blur(target);
+          setTimeout(() => !ref.current?.isFocused() && setKeepCaret(false), 300);
+        }}
+        onSubmitEditing={settle}
         style={[s.input, !editable && s.inputDisabled]}
         value={text}
         editable={editable}
         keyboardType="decimal-pad"
         placeholder={placeholder ?? '0'}
         placeholderTextColor="#9AA8B5"
-        selectTextOnFocus
-        onChangeText={(t) => {
-          const clean = t.replace(/[^0-9.\-]/g, '');
-          setText(clean);
-          if (clean.trim() === '') onChange(allowEmpty ? undefined : 0);
-          else onChange(parseNum(clean));
-        }}
+        selectTextOnFocus={!keepCaret}
+        onChangeText={(t) => apply(t.replace(/[^0-9.,+\-*/x×÷()]/g, ''))}
       />
+      {preview !== undefined ? <Text style={{ color: C.primary, fontSize: 12, marginTop: 2 }}>= {num(preview)}</Text> : null}
     </View>
   );
 }
@@ -532,6 +616,10 @@ export function diffText(n: number, currency: string): string {
 }
 
 export const s = StyleSheet.create({
+  calcBar: { flexDirection: 'row', backgroundColor: '#E3E8EE', height: CALC_BAR_H, paddingHorizontal: 4, paddingVertical: 4, gap: 4, borderTopWidth: 1, borderColor: '#C9D2DC' },
+  calcKey: { flex: 1, backgroundColor: '#fff', borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  calcKeyEq: { backgroundColor: '#0B5FA5' },
+  calcKeyText: { fontSize: 18, fontWeight: '700', color: '#16202B' },
   screen: { flex: 1, backgroundColor: C.bg },
   header: { backgroundColor: C.primary, paddingHorizontal: 16, paddingBottom: 12, flexDirection: 'row', alignItems: 'center' },
   headerTitle: { color: '#fff', fontSize: 19, fontWeight: '700' },

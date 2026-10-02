@@ -69,3 +69,66 @@ export function parseNum(s: string): number {
   const v = parseFloat(s.replace(/,/g, ''));
   return isFinite(v) ? v : 0;
 }
+
+/** True when the text is a sum to work out (has + − × ÷ beyond a leading minus sign). */
+export function isExpression(s: string): boolean {
+  return /[+*/x×÷()]|.-/.test(s.replace(/\s/g, '').replace(/,/g, ''));
+}
+
+/**
+ * Works out a typed sum such as "2000+1500-200", "12*500" or "(100+50)/2".
+ * A trailing operator is ignored while typing. Returns undefined when it can't be read.
+ */
+export function evalExpr(input: string): number | undefined {
+  const src = input.replace(/[\s,]/g, '').replace(/[x×]/gi, '*').replace(/÷/g, '/').replace(/[−–]/g, '-').replace(/[+\-*/(]+$/, '');
+  if (!src) return undefined;
+  let i = 0;
+  const peek = () => src[i];
+  const number = (): number | undefined => {
+    const m = /^\d*\.?\d+|^\d+\.?/.exec(src.slice(i));
+    if (!m) return undefined;
+    i += m[0].length;
+    return parseFloat(m[0]);
+  };
+  const factor = (): number | undefined => {
+    if (peek() === '-') {
+      i++;
+      const v = factor();
+      return v === undefined ? undefined : -v;
+    }
+    if (peek() === '+') {
+      i++;
+      return factor();
+    }
+    if (peek() === '(') {
+      i++;
+      const v = expr();
+      if (peek() === ')') i++;
+      return v;
+    }
+    return number();
+  };
+  const term = (): number | undefined => {
+    let v = factor();
+    while (v !== undefined && (peek() === '*' || peek() === '/')) {
+      const op = src[i++];
+      const r = factor();
+      if (r === undefined) return undefined;
+      v = op === '*' ? v * r : r === 0 ? undefined : v / r;
+    }
+    return v;
+  };
+  const expr = (): number | undefined => {
+    let v = term();
+    while (v !== undefined && (peek() === '+' || peek() === '-')) {
+      const op = src[i++];
+      const r = term();
+      if (r === undefined) return undefined;
+      v = op === '+' ? v + r : v - r;
+    }
+    return v;
+  };
+  const v = expr();
+  if (v === undefined || i !== src.length) return undefined;
+  return isFinite(v) ? Math.round(v * 1000) / 1000 : undefined;
+}
