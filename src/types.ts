@@ -25,6 +25,8 @@ export interface Settings {
   smsAfterCredit?: boolean;
   /** After a credit sale: send SMS by itself (Android), ask first, or don't send. */
   smsMode?: 'auto' | 'ask' | 'off';
+  /** 'each' = SMS after every credit fill; 'day' = one summary SMS per customer, sent from Station → Credit. */
+  smsTiming?: 'each' | 'day';
 }
 
 export interface Product {
@@ -272,6 +274,8 @@ export interface DayRecord {
   unitSettlements?: Record<string, UnitSettlement>;
   creditSales: CreditSale[];
   creditReceipts: CreditReceipt[];
+  /** Day-summary SMS status per customer id. */
+  summarySms?: Record<string, 'sent' | 'opened' | 'failed'>;
   expenses: Expense[];
   bankTxns: BankTxn[];
   otherIncome: OtherIncome[];

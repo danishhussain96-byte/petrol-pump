@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bankStatement, computeLedger, emptyDay, creditStatus, customerLedger, initialCarry } from '../src/calc';
-import { creditMessage, paymentMessage } from '../src/creditMessage';
+import { creditMessage, daySummaryMessage, paymentMessage } from '../src/creditMessage';
 import { defaultData, newDay, normalize } from '../src/defaults';
 import type { AppData } from '../src/types';
 
@@ -141,6 +141,21 @@ test('balance in texts is the latest one, including payments after the credit da
   const cleared = paymentMessage(data, 'c1', '2026-10-05', { kind: 'cheque-cleared', amount: 200, chequeNo: '77' }, '2026-10-05');
   assert.match(cleared, /cheque #77 for Rs 200 has cleared on Mon, 5 Oct 2026/);
   assert.match(cleared, /Nothing is due now\./);
+});
+
+test('one SMS for the day lists every vehicle filled', () => {
+  const data = notebookDay();
+  const day = data.days['2026-10-01'];
+  day.creditSales.push({ ...day.creditSales[0], id: 'cs2', vehicleNo: 'MH12CD5678', productId: 'diesel', qty: 20, amount: 1890 });
+  day.creditReceipts = [{ id: 'r1', customerId: 'c1', amount: 1000, mode: 'cash', note: '' }];
+  const msg = daySummaryMessage(data, 'c1', '2026-10-01', '2026-10-01');
+  const lines = msg.split('\n');
+  assert.equal(lines[0], 'Test Station: Dear Sharma Transport, credit on Thu, 1 Oct 2026:');
+  assert.equal(lines[1], '1. MH12AB1234 - Petrol 2.50 L - Rs 270.80');
+  assert.equal(lines[2], '2. MH12CD5678 - Diesel (HSD) 20 L - Rs 1,890');
+  assert.equal(lines[3], 'Credit for the day (2 fills): Rs 2,160.80.');
+  assert.equal(lines[4], 'Paid on Thu, 1 Oct 2026: Rs 1,000.');
+  assert.equal(lines[5], 'Total amount due: Rs 1,160.80.');
 });
 
 test('old Hi-Octane default becomes Power; renamed products are left alone', () => {

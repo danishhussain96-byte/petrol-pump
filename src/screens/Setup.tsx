@@ -467,6 +467,15 @@ function SettingsView() {
           ]}
           onChange={(v) => set({ smsMode: (v as SmsMode) || 'auto' })}
         />
+        <Select
+          label="Credit SMS timing"
+          value={st.smsTiming ?? 'each'}
+          options={[
+            { value: 'each', label: 'After every fill', sub: 'One SMS per credit entry' },
+            { value: 'day', label: 'One SMS per day', sub: 'All vehicles filled that day in one SMS, sent from Daily → Station → Credit' },
+          ]}
+          onChange={(v) => set({ smsTiming: v === 'day' ? 'day' : 'each' })}
+        />
         <Muted style={{ marginTop: 6 }}>
           Automatic SMS uses this phone's SIM and normal SMS charges. Android asks once for permission to send SMS. iPhone does not allow apps to send SMS by themselves, so on iPhone the SMS app opens with the message ready.
         </Muted>

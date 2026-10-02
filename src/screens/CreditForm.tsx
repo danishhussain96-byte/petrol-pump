@@ -26,6 +26,7 @@ export function notifyCredit(
   sale: CreditSale | undefined,
   mark?: (status: 'sent' | 'opened' | 'failed') => void,
 ) {
+  if (sale && data.settings.smsTiming === 'day') return; // one summary SMS later instead
   return notifyCustomer(data, customerId, creditMessage(data, customerId, date, sale), mark);
 }
 
@@ -266,7 +267,9 @@ export function CreditForm({
         <Field label="Slip #" value={f.slipNo} onChange={(t) => setF({ ...f, slipNo: t })} />
       </HStack>
       <Btn title="Save credit" onPress={add} style={{ marginTop: 10 }} />
-      {smsModeOf(data.settings) === 'auto' && canSendDirect() ? (
+      {smsModeOf(data.settings) !== 'off' && data.settings.smsTiming === 'day' ? (
+        <Muted style={{ marginTop: 4 }}>No SMS now: send one summary of the day's fills from Station → Credit.</Muted>
+      ) : smsModeOf(data.settings) === 'auto' && canSendDirect() ? (
         <Muted style={{ marginTop: 4 }}>An SMS with the balance goes to the customer automatically.</Muted>
       ) : smsModeOf(data.settings) !== 'off' ? (
         <Muted style={{ marginTop: 4 }}>You'll be asked to send the customer an SMS / WhatsApp.</Muted>

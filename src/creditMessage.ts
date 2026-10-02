@@ -44,7 +44,7 @@ export function creditMessage(data: AppData, customerId: string, date: string, s
     const what = [p && sale.qty ? `${p.name} ${num(sale.qty)} ${p.unit}` : '', sale.vehicleNo ? `vehicle ${sale.vehicleNo}` : ''].filter(Boolean).join(', ');
     lines.push(`${greeting(data, customerId)}, credit of ${m(sale.amount)} on ${prettyDate(date)}${what ? ` (${what})` : ''}.`);
     const dayCredit = creditStatus(data, customerId, date).todayCredit;
-    if (dayCredit > sale.amount + 0.005) lines.push(`Total credit on ${prettyDate(date)}: ${m(dayCredit)}.`);
+    if (dayCredit > sale.amount + 0.005) lines.push(`All credit fills on ${prettyDate(date)} together: ${m(dayCredit)} (before payments).`);
   } else {
     lines.push(`${greeting(data, customerId)}, your account as of ${prettyDate(latest(date, now))}.`);
   }
@@ -74,4 +74,30 @@ export function paymentMessage(data: AppData, customerId: string, date: string, 
           ? `${hi}, your cheque #${p.chequeNo} for ${m(p.amount)} has cleared on ${on} and is adjusted in your account.`
           : `${hi}, your cheque #${p.chequeNo} for ${m(p.amount)} has bounced (${on}). The amount is still due.`;
   return [first, ...balanceLines(data, customerId, latest(date, now)), 'Thank you.'].join('\n');
+}
+
+/** One text for the whole day: each fill with its vehicle, the day's total, payments that day, and what is due now. */
+export function daySummaryMessage(data: AppData, customerId: string, date: string, now = todayStr()): string {
+  const cur = data.settings.currency || 'Rs';
+  const m = (n: number) => `${cur} ${num(n)}`;
+  const day = data.days[date];
+  const sales = (day?.creditSales ?? []).filter((s) => s.customerId === customerId);
+  const paid = (day?.creditReceipts ?? []).filter((r) => r.customerId === customerId).reduce((a, r) => a + (r.amount || 0), 0);
+  const lines: string[] = [];
+  if (sales.length === 0) {
+    lines.push(`${greeting(data, customerId)}, no credit on ${prettyDate(date)}.`);
+  } else {
+    lines.push(`${greeting(data, customerId)}, credit on ${prettyDate(date)}:`);
+    sales.forEach((s, i) => {
+      const p = s.productId ? data.products.find((x) => x.id === s.productId) : undefined;
+      const what = [s.vehicleNo || 'no vehicle no.', p && s.qty ? `${p.name} ${num(s.qty)} ${p.unit}` : p?.name].filter(Boolean).join(' - ');
+      lines.push(`${i + 1}. ${what} - ${m(s.amount)}`);
+    });
+    const total = sales.reduce((a, s) => a + (s.amount || 0), 0);
+    lines.push(`Credit for the day (${sales.length} fill${sales.length === 1 ? '' : 's'}): ${m(total)}.`);
+  }
+  if (paid > 0.005) lines.push(`Paid on ${prettyDate(date)}: ${m(paid)}.`);
+  lines.push(...balanceLines(data, customerId, latest(date, now)));
+  lines.push('Thank you.');
+  return lines.join('\n');
 }

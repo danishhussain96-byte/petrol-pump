@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Text, View } from 'react-native';
 import { creditStatus, customerLedger, type CreditStatus } from '../calc';
-import { creditMessage } from '../creditMessage';
+import { creditMessage, daySummaryMessage } from '../creditMessage';
 import { useLookups } from '../hooks';
 import { sendWhatsApp } from '../sms';
 import { resendSms } from './CreditForm';
@@ -237,8 +237,16 @@ function CustomerDetail({ id, onBack }: { id: string; onBack: () => void }) {
           return (
             <View key={d} style={{ marginTop: 8 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ fontWeight: '700', color: C.text }}>{prettyDate(d)}</Text>
+                <Text style={{ fontWeight: '700', color: C.text, flex: 1 }}>{prettyDate(d)}</Text>
                 <Muted>Balance {num(rows[rows.length - 1].balance)}</Muted>
+                {c.phone && rows.some((r) => r.debit) ? (
+                  <Text
+                    style={{ paddingLeft: 10, fontSize: 16 }}
+                    onPress={() => resendSms(data, c.phone, c.name, daySummaryMessage(data, id, d), (status) => updateDay(d, (x) => ({ ...x, summarySms: { ...(x.summarySms || {}), [id]: status } })))}
+                  >
+                    💬
+                  </Text>
+                ) : null}
               </View>
               {rows.map((r, i) => (
                 <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 }}>

@@ -7,6 +7,7 @@ import { useStore } from '../store';
 import type { DayRecord, NozzleReading, SalesmanSettlement } from '../types';
 import { BankTxnForm, txnSign, txnTitle, type TxnPrefill } from './BankTxnForm';
 import { CreditForm } from './CreditForm';
+import { DaySummarySms } from './DaySummarySms';
 import { DispenserDay } from './DispenserDay';
 import { ReceivePayment, notifyChequeStatus } from './ReceivePayment';
 import {
@@ -585,6 +586,9 @@ function Credit({ day, set }: SectionProps) {
             onDelete={() => set((d) => ({ ...d, creditSales: d.creditSales.filter((x) => x.id !== c.id) }))}
           />
         ))}
+      </Card>
+      <Card title="Day summary SMS (all vehicles in one SMS)">
+        <DaySummarySms day={day} />
       </Card>
       <Card title="Add credit (not from a dispenser)">
         <CreditForm day={day} set={set} />
