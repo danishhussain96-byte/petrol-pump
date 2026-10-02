@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  BackHandler,
   FlatList,
-  Modal,
+  Keyboard,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,12 +32,184 @@ export const C = {
   chip: '#E6EEF6',
 };
 
+// ---------------- Keyboard handling ----------------
+// Android (edge-to-edge) does not resize the window or popups when the keyboard opens,
+// so we track the keyboard ourselves: scroll areas get extra bottom space and scroll the
+// focused input into view, and popups sit above the keyboard.
+
+export interface KeyboardState {
+  height: number;
+  /** Screen Y of the keyboard's top edge (Infinity when hidden). */
+  top: number;
+}
+
+const HIDDEN: KeyboardState = { height: 0, top: Infinity };
+
+export function useKeyboard(): KeyboardState {
+  const [kb, setKb] = useState<KeyboardState>(HIDDEN);
+  useEffect(() => {
+    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (e) =>
+      setKb({ height: e.endCoordinates.height, top: e.endCoordinates.screenY }),
+    );
+    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKb(HIDDEN));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return kb;
+}
+
+/** Lets inputs ask the nearest KeyboardScroll to bring them into view. */
+const RevealCtx = createContext<((input: TextInput | null) => void) | null>(null);
+
+function useRevealOnFocus() {
+  const reveal = useContext(RevealCtx);
+  const ref = useRef<TextInput>(null);
+  const onFocus = useCallback(() => reveal?.(ref.current), [reveal]);
+  return { ref, onFocus };
+}
+
+export function KeyboardScroll({
+  children,
+  style,
+  contentContainerStyle,
+  bottomPadding = 0,
+}: {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  contentContainerStyle?: StyleProp<ViewStyle>;
+  bottomPadding?: number;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  const kb = useKeyboard();
+  const kbRef = useRef(kb);
+  kbRef.current = kb;
+  const offset = useRef(0);
+
+  const reveal = useCallback((input: TextInput | null) => {
+    // Wait for the keyboard to finish opening so its position is known.
+    setTimeout(() => {
+      const sv = scrollRef.current;
+      const inner = sv?.getInnerViewNode?.();
+      if (!sv || !input || !inner) return;
+      const svNode = sv as unknown as View;
+      svNode.measureInWindow((_sx, sy, _sw, sh) => {
+        // Part of the scroll view not hidden by the keyboard.
+        const visible = Math.min(sh, kbRef.current.top - sy) || sh;
+        input.measureLayout(
+          inner,
+          (_x, y, _w, h) => {
+            const top = offset.current;
+            const bottom = top + visible;
+            if (y < top + 8 || y + h > bottom - 16) {
+              sv.scrollTo({ y: Math.max(0, y - Math.max(16, (visible - h) / 3)), animated: true });
+            }
+          },
+          () => {},
+        );
+      });
+    }, Platform.OS === 'android' ? 350 : 80);
+  }, []);
+
+  return (
+    <RevealCtx.Provider value={reveal}>
+      <ScrollView
+        ref={scrollRef}
+        style={style}
+        contentContainerStyle={[contentContainerStyle, { paddingBottom: bottomPadding + kb.height }]}
+        keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={32}
+        onScroll={(e) => (offset.current = e.nativeEvent.contentOffset.y)}
+      >
+        {children}
+      </ScrollView>
+    </RevealCtx.Provider>
+  );
+}
+
+// ---------------- Popups ----------------
+// Popups are drawn inside the app's own window (not a native Modal) so keyboard events
+// reach them on Android and they can move above the keyboard.
+
+type PortalApi = { set: (id: number, node: React.ReactNode | null) => void };
+const PortalCtx = createContext<PortalApi | null>(null);
+
+/** Hosts popups on top of everything inside it. Wrap the whole app once. */
+export function PortalHost({ children }: { children: React.ReactNode }) {
+  const [layers, setLayers] = useState<Map<number, React.ReactNode>>(new Map());
+  const api = useMemo<PortalApi>(
+    () => ({
+      set: (id, node) =>
+        setLayers((prev) => {
+          if (node === null && !prev.has(id)) return prev;
+          const next = new Map(prev);
+          if (node === null) next.delete(id);
+          else next.set(id, node);
+          return next;
+        }),
+    }),
+    [],
+  );
+  return (
+    <PortalCtx.Provider value={api}>
+      {children}
+      {[...layers].map(([id, node]) => (
+        <View key={id} style={StyleSheet.absoluteFill}>
+          {node}
+        </View>
+      ))}
+    </PortalCtx.Provider>
+  );
+}
+
+let nextPortalId = 1;
+
+/** Drop-in for a transparent Modal: renders its children full-screen in the PortalHost. */
+export function Overlay({ visible, onRequestClose, children }: { visible: boolean; onRequestClose?: () => void; children: React.ReactNode }) {
+  const api = useContext(PortalCtx);
+  const id = useRef(nextPortalId++).current;
+  useEffect(() => {
+    api?.set(id, visible ? children : null);
+  });
+  useEffect(() => () => api?.set(id, null), [api, id]);
+  const closeRef = useRef(onRequestClose);
+  closeRef.current = onRequestClose;
+  useEffect(() => {
+    if (!visible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeRef.current?.();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible]);
+  return null;
+}
+
+/** Popup frame: centred normally, moved to the top and kept above the keyboard while typing. */
+export function PopupFrame({ children, onBackdropPress, maxHeight = '90%' }: { children: React.ReactNode; onBackdropPress?: () => void; maxHeight?: `${number}%` }) {
+  const kb = useKeyboard();
+  const insets = useSafeAreaInsets();
+  const open = kb.height > 0;
+  const topGap = insets.top + 12;
+  return (
+    <Pressable style={[s.modalBg, open && { justifyContent: 'flex-start', paddingTop: topGap }]} onPress={onBackdropPress}>
+      <Pressable
+        style={[s.modalBox, { maxHeight: open ? Math.max(180, kb.top - topGap - insets.top - 16) : maxHeight }]}
+        onPress={() => {}}
+      >
+        {children}
+      </Pressable>
+    </Pressable>
+  );
+}
+
 export function Screen({ children, scroll = true }: { children: React.ReactNode; scroll?: boolean }) {
   if (!scroll) return <View style={[s.screen, { padding: 12 }]}>{children}</View>;
   return (
-    <ScrollView style={s.screen} contentContainerStyle={{ padding: 12, paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
+    <KeyboardScroll style={s.screen} contentContainerStyle={{ padding: 12 }} bottomPadding={48}>
       {children}
-    </ScrollView>
+    </KeyboardScroll>
   );
 }
 
@@ -112,6 +286,7 @@ export function NumInput({
   editable?: boolean;
   allowEmpty?: boolean;
 }) {
+  const { ref, onFocus } = useRevealOnFocus();
   const fmt = (v: number | undefined) => (v === undefined || (v === 0 && !allowEmpty) ? '' : String(v));
   const [text, setText] = useState(fmt(value));
   useEffect(() => {
@@ -123,6 +298,8 @@ export function NumInput({
     <View style={[{ flex: 1 }, style]}>
       {label ? <Label>{label}</Label> : null}
       <TextInput
+        ref={ref}
+        onFocus={onFocus}
         style={[s.input, !editable && s.inputDisabled]}
         value={text}
         editable={editable}
@@ -160,10 +337,13 @@ export function Field({
   secure?: boolean;
   keyboardType?: 'default' | 'phone-pad' | 'number-pad';
 }) {
+  const { ref, onFocus } = useRevealOnFocus();
   return (
     <View style={[{ flex: 1 }, style]}>
       {label ? <Label>{label}</Label> : null}
       <TextInput
+        ref={ref}
+        onFocus={onFocus}
         style={[s.input, multiline && { minHeight: 70, textAlignVertical: 'top' }]}
         value={value}
         onChangeText={onChange}
@@ -271,15 +451,14 @@ export function Select({
           {sel ? sel.label : value === '' && allowNone ? allowNone : placeholder}
         </Text>
       </Pressable>
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <Pressable style={s.modalBg} onPress={() => setOpen(false)}>
-          <Pressable style={s.modalBox} onPress={() => {}}>
+      <Overlay visible={open} onRequestClose={() => setOpen(false)}>
+        <PopupFrame onBackdropPress={() => setOpen(false)}>
             <Text style={[s.cardTitle, { marginBottom: 8 }]}>{label || 'Select'}</Text>
             {options.length > 8 ? <TextInput style={[s.input, { marginBottom: 8 }]} placeholder="Search…" value={q} onChangeText={setQ} /> : null}
             <FlatList
               data={list}
               keyExtractor={(o) => o.value || '_none'}
-              style={{ maxHeight: 420 }}
+              style={{ maxHeight: 420, flexShrink: 1 }}
               ListEmptyComponent={<Muted>Nothing to select. Add items in Setup.</Muted>}
               renderItem={({ item }) => (
                 <Pressable
@@ -296,9 +475,8 @@ export function Select({
               )}
             />
             <Btn title="Close" kind="secondary" onPress={() => setOpen(false)} style={{ marginTop: 8 }} />
-          </Pressable>
-        </Pressable>
-      </Modal>
+        </PopupFrame>
+      </Overlay>
     </View>
   );
 }

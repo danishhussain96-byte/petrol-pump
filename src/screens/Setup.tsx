@@ -2,12 +2,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import React, { useState } from 'react';
-import { Alert, Modal, ScrollView, Switch, Text, View } from 'react-native';
+import { Alert, Switch, Text, View } from 'react-native';
 import { useLookups } from '../hooks';
 import { useStore } from '../store';
 import { makeUnit } from '../defaults';
 import type { AppData, BankAccount, Customer, DispensingUnit, Nozzle, Product, Salesman } from '../types';
-import { Btn, C, Card, ChipBar, Empty, Field, HStack, ListItem, Muted, NumInput, Screen, Select, s, confirm } from '../ui';
+import { Btn, C, Card, ChipBar, Empty, Field, HStack, KeyboardScroll, ListItem, Muted, NumInput, Overlay, PopupFrame, Screen, Select, s, confirm } from '../ui';
 import { num, todayStr, uid } from '../utils';
 
 type Tab = 'products' | 'units' | 'nozzles' | 'salesmen' | 'banks' | 'customers' | 'settings';
@@ -59,20 +59,20 @@ function useList<K extends ListKey>(key: K) {
 
 function EditModal({ title, visible, onClose, onSave, onDelete, children }: { title: string; visible: boolean; onClose: () => void; onSave: () => void; onDelete?: () => void; children: React.ReactNode }) {
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={s.modalBg}>
-        <View style={[s.modalBox, { maxHeight: '90%' }]}>
-          <Text style={[s.cardTitle, { marginBottom: 4 }]}>{title}</Text>
-          <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
-          <HStack style={{ marginTop: 14 }}>
-            {onDelete ? <Btn title="Delete" kind="danger" onPress={() => confirm('Delete permanently? Past days that use it will show "—".', onDelete)} /> : null}
-            <View style={{ flex: 1 }} />
-            <Btn title="Cancel" kind="secondary" onPress={onClose} />
-            <Btn title="Save" onPress={onSave} />
-          </HStack>
-        </View>
-      </View>
-    </Modal>
+    <Overlay visible={visible} onRequestClose={onClose}>
+      <PopupFrame>
+        <Text style={[s.cardTitle, { marginBottom: 4 }]}>{title}</Text>
+        <KeyboardScroll style={{ flexShrink: 1 }} bottomPadding={8}>
+          {children}
+        </KeyboardScroll>
+        <HStack style={{ marginTop: 14 }}>
+          {onDelete ? <Btn title="Delete" kind="danger" onPress={() => confirm('Delete permanently? Past days that use it will show "—".', onDelete)} /> : null}
+          <View style={{ flex: 1 }} />
+          <Btn title="Cancel" kind="secondary" onPress={onClose} />
+          <Btn title="Save" onPress={onSave} />
+        </HStack>
+      </PopupFrame>
+    </Overlay>
   );
 }
 

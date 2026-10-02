@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, BackHandler, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Pressable, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DayEntry } from './src/screens/DayEntry';
 import { Home } from './src/screens/Home';
@@ -8,7 +8,7 @@ import { Ledgers } from './src/screens/Ledgers';
 import { Reports } from './src/screens/Reports';
 import { Setup } from './src/screens/Setup';
 import { StoreProvider, useStore } from './src/store';
-import { C, Header, s } from './src/ui';
+import { C, Header, PortalHost, s } from './src/ui';
 import { todayStr } from './src/utils';
 
 type Tab = 'home' | 'day' | 'reports' | 'ledgers' | 'setup';
@@ -64,13 +64,13 @@ function Main() {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <Header title={tab === 'home' ? data.settings.stationName || 'Petrol Pump' : TITLES[tab]} subtitle={tab === 'home' ? 'Daily sales · stock · cash · bank' : undefined} />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={{ flex: 1 }}>
         {tab === 'home' && <Home openDay={openDay} go={setTab} />}
         {tab === 'day' && <DayEntry date={date} setDate={setDate} />}
         {tab === 'reports' && <Reports openDay={openDay} />}
         {tab === 'ledgers' && <Ledgers />}
         {tab === 'setup' && <Setup />}
-      </KeyboardAvoidingView>
+      </View>
       <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderColor: C.border, paddingBottom: insets.bottom }}>
         {TABS.map((t) => (
           <Pressable key={t.key} onPress={() => setTab(t.key)} style={{ flex: 1, alignItems: 'center', paddingVertical: 8 }}>
@@ -114,7 +114,9 @@ export default function App() {
     <SafeAreaProvider>
       <StoreProvider>
         <StatusBar style="light" />
-        <Main />
+        <PortalHost>
+          <Main />
+        </PortalHost>
       </StoreProvider>
     </SafeAreaProvider>
   );
