@@ -178,6 +178,14 @@ export interface Carry {
   pending: Record<string, number>;
   cash: number;
   meters: Record<string, number>;
+  /** Last closing meter entered on an earlier day, by nozzle (only real readings, not Setup openings). */
+  closings?: Record<string, number>;
+}
+
+/** A day's opening meter: the previous day's closing, unless the opening was typed by hand. */
+export function openingOf(r: { nozzleId: string; opening: number; openingManual?: boolean }, carry: Carry): number {
+  if (r.openingManual) return r.opening || 0;
+  return carry.closings?.[r.nozzleId] ?? (r.opening || 0);
 }
 
 export function rateOf(day: DayRecord, p: Product): number {
@@ -253,7 +261,8 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
   for (const r of day.readings) {
     const nz = nozzles.get(r.nozzleId);
     if (!nz) continue;
-    const litres = Math.max(0, round2((r.closing || 0) - (r.opening || 0) - (r.testLitres || 0)));
+    const opening = openingOf(r, carry);
+    const litres = Math.max(0, round2((r.closing || 0) - opening - (r.testLitres || 0)));
     const productId = r.productId || nz.productId;
     const rt = rate(productId);
     nozzleLines.push({
@@ -261,7 +270,7 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
       unitId: nz.unitId ?? '',
       productId,
       salesmanId: r.salesmanId || COUNTER,
-      opening: r.opening || 0,
+      opening,
       closing: r.closing || 0,
       testLitres: r.testLitres || 0,
       litres,
@@ -633,8 +642,13 @@ export function nextCarry(carry: Carry, day: DayRecord, s: DaySummary): Carry {
     cost[r.productId] = r.costRate;
   }
   const meters = { ...carry.meters };
-  for (const r of day.readings) if (r.closing) meters[r.nozzleId] = r.closing;
-  return { stock, cost, pending, cash: s.cash.closing, meters };
+  const closings = { ...(carry.closings || {}) };
+  for (const r of day.readings)
+    if (r.closing) {
+      meters[r.nozzleId] = r.closing;
+      closings[r.nozzleId] = r.closing;
+    }
+  return { stock, cost, pending, cash: s.cash.closing, meters, closings };
 }
 
 export interface Ledger {

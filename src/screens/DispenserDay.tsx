@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
-import { carryFor, creditStatus, rateOf } from '../calc';
+import { carryFor, creditStatus, openingOf, rateOf, type Carry } from '../calc';
 import { creditMessage } from '../creditMessage';
 import { useLookups } from '../hooks';
 import { useStore } from '../store';
@@ -27,14 +27,16 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
       ...day.readings.filter((r) => L.nozzle.get(r.nozzleId)?.unitId === unitId).map((r) => r.nozzleId),
     ]),
   ];
-  const readingOf = (id: string): NozzleReading =>
-    day.readings.find((r) => r.nozzleId === id) ?? {
+  const readingOf = (id: string): NozzleReading => {
+    const r = day.readings.find((x) => x.nozzleId === id) ?? {
       nozzleId: id,
       productId: L.nozzle.get(id)?.productId,
       opening: carry.meters[id] ?? L.nozzle.get(id)?.openingReading ?? 0,
       closing: 0,
       testLitres: 0,
     };
+    return { ...r, opening: openingOf(r, carry) };
+  };
   const setReading = (id: string, patch: Partial<NozzleReading>) =>
     set((d) => {
       const exists = d.readings.some((r) => r.nozzleId === id);
@@ -128,10 +130,11 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
                 <Text style={{ fontWeight: '700', color: C.primary }}>{num(line?.litres ?? 0)} L</Text>
               </View>
               <HStack>
-                <NumInput label="Opening" value={r.opening} onChange={(v) => setReading(id, { opening: v ?? 0 })} />
+                <NumInput label="Opening" value={r.opening} onChange={(v) => setReading(id, { opening: v ?? 0, openingManual: true })} />
                 <NumInput label="Closing" value={r.closing} onChange={(v) => setReading(id, { closing: v ?? 0 })} />
                 <NumInput label="Test" value={r.testLitres} onChange={(v) => setReading(id, { testLitres: v ?? 0 })} style={{ maxWidth: 74 }} />
               </HStack>
+              <OpeningNote r={r} carry={carry} onReset={(v) => setReading(id, { opening: v, openingManual: false })} />
               {invalid ? <Text style={{ color: C.red, marginTop: 4 }}>Closing is less than opening.</Text> : null}
             </View>
           );
@@ -310,5 +313,20 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
         ) : null}
       </Card>
     </>
+  );
+}
+
+/** Under a nozzle: where the opening came from, and a way back to the previous closing after a manual edit. */
+export function OpeningNote({ r, carry, onReset }: { r: NozzleReading; carry: Carry; onReset: (closing: number) => void }) {
+  const last = carry.closings?.[r.nozzleId];
+  if (last === undefined) return null;
+  if (!r.openingManual || Math.abs(r.opening - last) < 0.0005)
+    return <Muted style={{ marginTop: 2 }}>Opening = previous day's closing</Muted>;
+  return (
+    <Pressable onPress={() => onReset(last)} hitSlop={6}>
+      <Text style={{ color: C.accent, marginTop: 2, fontSize: 12 }}>
+        Opening typed by hand (previous closing {num(last)}) · <Text style={{ color: C.primary, fontWeight: '700' }}>↺ Use previous closing</Text>
+      </Text>
+    </Pressable>
   );
 }

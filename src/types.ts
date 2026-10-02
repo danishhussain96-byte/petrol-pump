@@ -133,6 +133,8 @@ export interface NozzleReading {
   productId?: string;
   salesmanId?: string;
   opening: number;
+  /** Opening typed by hand; otherwise it follows the previous day's closing. */
+  openingManual?: boolean;
   closing: number;
   /** Litres pumped for testing / returned to tank — not counted as sales. */
   testLitres: number;

@@ -179,3 +179,26 @@ test('typed bank entries carry their id so they can be deleted from the statemen
   assert.equal(rows.find((r) => r.kind === 'card')!.txnId, undefined);
   assert.equal(l.summaries['2026-10-01'].unitCash.find((u) => u.unitId === 'du1')!.deposits[0].txnId, 'dep1');
 });
+
+test("a day's opening meter follows the earlier day's closing unless typed by hand", () => {
+  const data = defaultData();
+  data.products = data.products.map((p) => (p.id === 'petrol' ? { ...p, rate: 100 } : p));
+  const n = data.nozzles[0].id;
+  data.days['2026-10-01'] = { ...emptyDay('2026-10-01'), readings: [{ nozzleId: n, productId: 'petrol', opening: 1000, closing: 1100, testLitres: 0 }] };
+  // Next day was opened before the earlier closing was final: its stored opening is stale.
+  data.days['2026-10-02'] = { ...emptyDay('2026-10-02'), readings: [{ nozzleId: n, productId: 'petrol', opening: 1000, closing: 1250, testLitres: 0 }] };
+  let l = computeLedger(data);
+  assert.equal(l.summaries['2026-10-02'].nozzles[0].opening, 1100);
+  assert.equal(l.summaries['2026-10-02'].nozzles[0].litres, 150);
+  // Correcting the earlier closing moves the next opening with it.
+  data.days['2026-10-01'].readings[0].closing = 1120;
+  l = computeLedger(data);
+  assert.equal(l.summaries['2026-10-02'].nozzles[0].opening, 1120);
+  // A typed opening (e.g. meter replaced) is kept.
+  data.days['2026-10-02'].readings[0] = { ...data.days['2026-10-02'].readings[0], opening: 1200, openingManual: true };
+  l = computeLedger(data);
+  assert.equal(l.summaries['2026-10-02'].nozzles[0].opening, 1200);
+  assert.equal(l.summaries['2026-10-02'].nozzles[0].litres, 50);
+  // First day ever: no earlier closing, so the entered opening is used.
+  assert.equal(l.summaries['2026-10-01'].nozzles[0].opening, 1000);
+});

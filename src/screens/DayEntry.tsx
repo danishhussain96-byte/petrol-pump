@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
-import { COUNTER, DENOMINATIONS, carryFor, computeDay, parsePaymentKey, payBankFor, paymentKey, purchaseAmount, rateOf, type DaySummary, type PayKind } from '../calc';
+import { COUNTER, DENOMINATIONS, carryFor, computeDay, openingOf, parsePaymentKey, payBankFor, paymentKey, purchaseAmount, rateOf, type DaySummary, type PayKind } from '../calc';
 import { useLookups } from '../hooks';
 import { dispenserReportHtml, shareDayReport, shareHtml } from '../report';
 import { useStore } from '../store';
@@ -8,7 +8,7 @@ import type { DayRecord, NozzleReading, SalesmanSettlement } from '../types';
 import { BankTxnForm, txnSign, txnTitle, type TxnPrefill } from './BankTxnForm';
 import { CreditForm } from './CreditForm';
 import { DaySummarySms } from './DaySummarySms';
-import { DispenserDay } from './DispenserDay';
+import { DispenserDay, OpeningNote } from './DispenserDay';
 import { ReceivePayment, notifyChequeStatus } from './ReceivePayment';
 import {
   Btn,
@@ -159,8 +159,10 @@ function Meters({ day, sum, set }: SectionProps) {
   const L = useLookups();
   const carry = carryFor(data, ledger, day.date);
   const nozzleIds = [...new Set([...day.readings.map((r) => r.nozzleId), ...data.nozzles.filter((n) => n.active).map((n) => n.id)])];
-  const readingOf = (id: string): NozzleReading =>
-    day.readings.find((r) => r.nozzleId === id) ?? { nozzleId: id, opening: carry.meters[id] ?? 0, closing: 0, testLitres: 0 };
+  const readingOf = (id: string): NozzleReading => {
+    const r = day.readings.find((x) => x.nozzleId === id) ?? { nozzleId: id, opening: carry.meters[id] ?? 0, closing: 0, testLitres: 0 };
+    return { ...r, opening: openingOf(r, carry) };
+  };
   const setReading = (id: string, patch: Partial<NozzleReading>) =>
     set((d) => {
       const exists = d.readings.some((r) => r.nozzleId === id);
@@ -242,10 +244,11 @@ function Meters({ day, sum, set }: SectionProps) {
                 return (
                   <Card key={id} title={`${nz?.name ?? 'Nozzle'} · ${L.productName(nz?.productId)}`} right={<Text style={{ fontWeight: '700', color: C.primary }}>{num(line?.litres ?? 0)} L</Text>}>
                     <HStack>
-                      <NumInput label="Opening" value={r.opening} onChange={(v) => setReading(id, { opening: v ?? 0 })} />
+                      <NumInput label="Opening" value={r.opening} onChange={(v) => setReading(id, { opening: v ?? 0, openingManual: true })} />
                       <NumInput label="Closing" value={r.closing} onChange={(v) => setReading(id, { closing: v ?? 0 })} />
                       <NumInput label="Test" value={r.testLitres} onChange={(v) => setReading(id, { testLitres: v ?? 0 })} style={{ maxWidth: 80 }} />
                     </HStack>
+                    <OpeningNote r={r} carry={carry} onReset={(v) => setReading(id, { opening: v, openingManual: false })} />
                     {invalid ? <Text style={{ color: C.red, marginTop: 6 }}>Closing is less than opening.</Text> : null}
                     <Select label="Salesman" value={r.salesmanId} options={L.opt.salesmen} allowNone="— Not assigned —" onChange={(v) => setReading(id, { salesmanId: v })} />
                     <Row label="Amount" value={`${L.cur} ${num(line?.amount ?? 0)}`} bold />
