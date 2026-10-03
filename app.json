@@ -2,7 +2,7 @@
   "expo": {
     "name": "Petrol Pump Manager",
     "slug": "petrol-pump-manager",
-    "version": "1.10.0",
+    "version": "1.11.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,7 +19,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.petrolpump.manager",
-      "versionCode": 14
+      "versionCode": 15
     },
     "web": {
       "favicon": "./assets/favicon.png"

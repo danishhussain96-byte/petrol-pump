@@ -456,6 +456,7 @@ function SettingsView() {
         <Select label="Card (POS) sales go to" value={st.cardBankId} options={L.opt.banks} allowNone="— Don't post to bank —" onChange={(v) => set({ cardBankId: v })} />
         <Select label="Digital / online sales go to" value={st.digitalBankId} options={L.opt.banks} allowNone="— Don't post to bank —" onChange={(v) => set({ digitalBankId: v })} />
       </Card>
+      <PartnersCard partners={st.partners ?? []} onChange={(partners) => set({ partners })} />
       <Card title="Credit SMS">
         <Select
           label="After each credit sale"
@@ -500,5 +501,29 @@ function SettingsView() {
       </Card>
       <Muted>{Object.keys(data.days).length} days recorded.</Muted>
     </>
+  );
+}
+
+/** Owners / partners who get the end-of-day credit report by SMS. */
+function PartnersCard({ partners, onChange }: { partners: { name: string; phone: string }[]; onChange: (p: { name: string; phone: string }[]) => void }) {
+  const [f, setF] = useState({ name: '', phone: '' });
+  const add = () => {
+    if (!f.phone.trim()) return Alert.alert('Mobile number required');
+    onChange([...partners, { name: f.name.trim() || `Partner ${partners.length + 1}`, phone: f.phone.trim() }]);
+    setF({ name: '', phone: '' });
+  };
+  return (
+    <Card title="Partners / owners (end-of-day SMS)">
+      <Muted>They get the day's credit report: who took credit (with vehicles), payments received, and every customer's pending balance. Send it from Daily → Station → Summary.</Muted>
+      {partners.length === 0 ? <Empty text="No partners added" /> : null}
+      {partners.map((p, i) => (
+        <ListItem key={i} title={p.name} sub={p.phone} onDelete={() => onChange(partners.filter((_, j) => j !== i))} />
+      ))}
+      <HStack style={{ marginTop: 6 }}>
+        <Field label="Name" value={f.name} onChange={(t) => setF({ ...f, name: t })} />
+        <Field label="Mobile" value={f.phone} keyboardType="phone-pad" onChange={(t) => setF({ ...f, phone: t })} />
+      </HStack>
+      <Btn title="+ Add partner" kind="secondary" onPress={add} style={{ marginTop: 8 }} />
+    </Card>
   );
 }

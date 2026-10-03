@@ -101,3 +101,57 @@ export function daySummaryMessage(data: AppData, customerId: string, date: strin
   lines.push('Thank you.');
   return lines.join('\n');
 }
+
+/**
+ * End-of-day credit report for the owners / partners: who took credit that day (with vehicles),
+ * payments received that day, and every customer's pending balance as of that day.
+ */
+export function partnerDayMessage(data: AppData, date: string): string {
+  const cur = data.settings.currency || 'Rs';
+  const m = (n: number) => `${cur} ${num(n)}`;
+  const name = (id: string) => data.customers.find((c) => c.id === id)?.name ?? 'Unknown';
+  const day = data.days[date];
+  const lines: string[] = [`${data.settings.stationName || 'Petrol pump'} - credit report ${prettyDate(date)}`];
+
+  const byCustomer = new Map<string, { amount: number; vehicles: Set<string> }>();
+  for (const s of day?.creditSales ?? []) {
+    const e = byCustomer.get(s.customerId) ?? { amount: 0, vehicles: new Set<string>() };
+    e.amount += s.amount || 0;
+    if (s.vehicleNo) e.vehicles.add(s.vehicleNo.toUpperCase());
+    byCustomer.set(s.customerId, e);
+  }
+  const todayTotal = [...byCustomer.values()].reduce((a, e) => a + e.amount, 0);
+  lines.push('');
+  if (byCustomer.size === 0) lines.push('Credit today: none');
+  else {
+    lines.push('Credit today:');
+    [...byCustomer.entries()]
+      .sort((a, b) => b[1].amount - a[1].amount)
+      .forEach(([id, e], i) => lines.push(`${i + 1}. ${name(id)}${e.vehicles.size ? ` (${[...e.vehicles].join(', ')})` : ''} - ${m(e.amount)}`));
+    lines.push(`Total credit today: ${m(todayTotal)}`);
+  }
+
+  const paidToday = new Map<string, number>();
+  for (const r of day?.creditReceipts ?? []) paidToday.set(r.customerId, (paidToday.get(r.customerId) || 0) + (r.amount || 0));
+  for (const ch of data.cheques || []) if (ch.status === 'cleared' && ch.statusDate === date) paidToday.set(ch.customerId, (paidToday.get(ch.customerId) || 0) + (ch.amount || 0));
+  if (paidToday.size) {
+    lines.push('');
+    lines.push('Received today:');
+    for (const [id, amt] of paidToday) lines.push(`${name(id)} - ${m(amt)}`);
+  }
+
+  const pending = data.customers
+    .map((c) => ({ c, st: creditStatus(data, c.id, date) }))
+    .filter((x) => x.st.balance > 0.005)
+    .sort((a, b) => b.st.balance - a.st.balance);
+  lines.push('');
+  if (pending.length === 0) lines.push('Pending balances: none');
+  else {
+    lines.push('Pending balances:');
+    pending.forEach(({ c, st }, i) =>
+      lines.push(`${i + 1}. ${c.name} - ${m(st.balance)}${st.daysLeft !== undefined && st.daysLeft < 0 ? ` (overdue ${-st.daysLeft}d)` : ''}`),
+    );
+    lines.push(`Total pending: ${m(pending.reduce((a, x) => a + x.st.balance, 0))}`);
+  }
+  return lines.join('\n');
+}

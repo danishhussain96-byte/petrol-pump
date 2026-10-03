@@ -34,7 +34,7 @@ export function Home({ openDay, go }: { openDay: (d: string) => void; go: (tab: 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
         <Stat label="Sales today" value={`${L.cur} ${num(s.totalSales)}`} />
         <Stat label="Fuel sold" value={`${num(s.fuelLitres)} L`} />
-        <Stat label="Cash in hand" value={`${L.cur} ${num(s.cash.closing)}`} />
+        <Stat label="Cash received today" value={`${L.cur} ${num(s.cash.receivedToday)}`} />
         <Stat label="Short / excess" value={num(s.shortExcess)} color={diffColor(s.shortExcess)} />
       </View>
       <Btn title="📝 Enter today's sales" onPress={() => openDay(today)} style={{ marginBottom: 8 }} />

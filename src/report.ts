@@ -150,9 +150,15 @@ export function dayReportHtml(data: AppData, s: DaySummary): string {
   const c = s.cash;
   b += '<h2>Cash</h2>';
   b += table(
-    ['Item', 'Amount'],
+    ['Cash received today', 'Amount'],
+    [['From salesmen', c.salesCash], ['From credit customers', c.creditRecovery], ['Other income', c.otherIncome], ['Total cash received today', c.receivedToday]],
+    1,
+    true,
+  );
+  b += table(
+    ['Cash in hand (incl. earlier days)', 'Amount'],
     [
-      ['Opening cash', c.opening],
+      ['Cash not banked from earlier days', c.opening],
       ['+ Cash from salesmen', c.salesCash],
       ['+ Credit recovery (cash)', c.creditRecovery],
       ['+ Other income', c.otherIncome],

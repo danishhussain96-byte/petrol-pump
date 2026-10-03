@@ -132,6 +132,8 @@ export interface CashFlow {
   expenses: number;
   purchases: number;
   bankDeposits: number;
+  /** Cash that came in on this day only: salesmen + cash from credit customers + other income. */
+  receivedToday: number;
   expected: number;
   counted: number;
   hasCount: boolean;
@@ -444,12 +446,14 @@ export function computeDay(data: AppData, day: DayRecord, carry: Carry): DaySumm
     expenses: round2(sum(cashExpenses, (e) => e.amount)),
     purchases: round2(sum(cashPurchases, purchaseAmount)),
     bankDeposits: round2(sum(day.bankTxns.filter((t) => t.type === 'deposit'), (t) => t.amount)),
+    receivedToday: 0,
     expected: 0,
     counted: 0,
     hasCount: false,
     difference: 0,
     closing: 0,
   };
+  cashFlow.receivedToday = round2(cashFlow.salesCash + cashFlow.creditRecovery + cashFlow.otherIncome);
   cashFlow.expected = round2(
     cashFlow.opening +
       cashFlow.salesCash +

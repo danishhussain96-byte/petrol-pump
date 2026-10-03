@@ -13,6 +13,8 @@ export interface Settings {
   currency: string;
   /** Cash in hand before the first recorded day. */
   openingCash: number;
+  /** Owners / partners who get the end-of-day credit SMS. */
+  partners?: { name: string; phone: string }[];
   /** Default bank account for card (POS) sales when a dispensing unit has none. */
   cardBankId?: string;
   /** Default bank account for digital / online sales when a dispensing unit has none. */
@@ -276,6 +278,10 @@ export interface DayRecord {
   unitSettlements?: Record<string, UnitSettlement>;
   creditSales: CreditSale[];
   creditReceipts: CreditReceipt[];
+  /** End-of-day report to partners: when it was sent. */
+  partnerSms?: { at: string; sent: number; failed: number };
+  /** Dispensers saved (locked) for this day; tap Edit to change them again. */
+  unitSaved?: Record<string, boolean>;
   /** Day-summary SMS status per customer id. */
   summarySms?: Record<string, 'sent' | 'opened' | 'failed'>;
   expenses: Expense[];

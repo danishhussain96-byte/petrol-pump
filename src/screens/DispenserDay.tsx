@@ -20,6 +20,8 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
   const [showPay, setShowPay] = useState(false);
   const [showDeposit, setShowDeposit] = useState(false);
   const unit = L.unit.get(unitId);
+  const saved = !!day.unitSaved?.[unitId];
+  const setSaved = (v: boolean) => set((d) => ({ ...d, unitSaved: { ...(d.unitSaved || {}), [unitId]: v } }));
   const carry = carryFor(data, ledger, day.date);
   const nozzleIds = [
     ...new Set([
@@ -81,9 +83,35 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
     );
   };
 
+  const save = () => {
+    const bad = nozzleIds.map(readingOf).filter((r) => r.closing > 0 && r.closing < r.opening);
+    if (bad.length) return Alert.alert('Check the meters', `Closing is less than opening on ${bad.map((r) => L.nozzle.get(r.nozzleId)?.name).join(', ')}.`);
+    const missing = nozzleIds.map(readingOf).filter((r) => !r.closing);
+    const diff = sheet?.diff ?? 0;
+    const warn = [
+      missing.length ? `No closing reading on ${missing.map((r) => L.nozzle.get(r.nozzleId)?.name).join(', ')}.` : '',
+      Math.abs(diff) >= 1 ? `${diff < 0 ? 'Short' : 'Excess'} ${L.cur} ${num(Math.abs(diff))}.` : '',
+    ].filter(Boolean);
+    if (!warn.length) return setSaved(true);
+    Alert.alert(`Save ${unit?.name}?`, warn.join('\n'), [
+      { text: 'Go back', style: 'cancel' },
+      { text: 'Save anyway', onPress: () => setSaved(true) },
+    ]);
+  };
+  const saveBar = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+      <Text style={{ flex: 1, color: saved ? C.green : C.muted, fontWeight: '600' }}>
+        {saved ? '🔒 Saved. Tap Edit to change.' : 'Entries save as you type. Tap Save when this dispenser is done.'}
+      </Text>
+      {saved ? <Btn title="✏️ Edit" kind="secondary" onPress={() => setSaved(false)} /> : <Btn title="💾 Save" onPress={save} />}
+    </View>
+  );
+
   if (!unit) return <Empty text="Dispenser not found" />;
   return (
     <>
+      {saveBar}
+      <View pointerEvents={saved ? 'none' : 'auto'}>
       <Card title={`⛽ ${unit.name}`} right={<Text style={{ fontWeight: '700', color: C.primary }}>{L.cur} {num(sheet?.fuelAmount ?? 0)}</Text>}>
         <Select label="Salesman" value={salesmanId} options={L.opt.salesmen} allowNone="— Not assigned —" onChange={setSalesman} />
         <HStack style={{ flexWrap: 'wrap', marginTop: 4 }}>
@@ -92,6 +120,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
             if (!p) return null;
             return (
               <NumInput
+                editable={!saved}
                 key={pid}
                 style={{ minWidth: 100 }}
                 label={`${p.name} rate`}
@@ -130,9 +159,9 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
                 <Text style={{ fontWeight: '700', color: C.primary }}>{num(line?.litres ?? 0)} L</Text>
               </View>
               <HStack>
-                <NumInput label="Opening" value={r.opening} onChange={(v) => setReading(id, { opening: v ?? 0, openingManual: true })} />
-                <NumInput label="Closing" value={r.closing} onChange={(v) => setReading(id, { closing: v ?? 0 })} />
-                <NumInput label="Test" value={r.testLitres} onChange={(v) => setReading(id, { testLitres: v ?? 0 })} style={{ maxWidth: 74 }} />
+                <NumInput editable={!saved} label="Opening" value={r.opening} onChange={(v) => setReading(id, { opening: v ?? 0, openingManual: true })} />
+                <NumInput editable={!saved} label="Closing" value={r.closing} onChange={(v) => setReading(id, { closing: v ?? 0 })} />
+                <NumInput editable={!saved} label="Test" value={r.testLitres} onChange={(v) => setReading(id, { testLitres: v ?? 0 })} style={{ maxWidth: 74 }} />
               </HStack>
               <OpeningNote r={r} carry={carry} onReset={(v) => setReading(id, { opening: v, openingManual: false })} />
               {invalid ? <Text style={{ color: C.red, marginTop: 4 }}>Closing is less than opening.</Text> : null}
@@ -156,23 +185,23 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
 
       <Card title="Money received">
         <HStack>
-          <NumInput label="Cash" value={us.cash} onChange={(v) => setUs({ cash: v ?? 0 })} />
-          <NumInput label="Online / UPI" value={us.online} onChange={(v) => setUs({ online: v ?? 0 })} />
+          <NumInput editable={!saved} label="Cash" value={us.cash} onChange={(v) => setUs({ cash: v ?? 0 })} />
+          <NumInput editable={!saved} label="Online / UPI" value={us.online} onChange={(v) => setUs({ online: v ?? 0 })} />
         </HStack>
         <HStack>
-          <NumInput label="POS (card)" value={us.pos} onChange={(v) => setUs({ pos: v ?? 0 })} />
+          <NumInput editable={!saved} label="POS (card)" value={us.pos} onChange={(v) => setUs({ pos: v ?? 0 })} />
           <View style={{ flex: 1, justifyContent: 'flex-end' }}>
             <Muted>Credit (from list below)</Muted>
             <Text style={{ fontSize: 16, fontWeight: '700', color: C.text, paddingVertical: 10 }}>{num(sheet?.credit ?? 0)}</Text>
           </View>
         </HStack>
-        <Btn
+        {saved ? null : <Btn
           title="Cash = sale − online − POS − credit"
           kind="secondary"
           small
           style={{ marginTop: 8, alignSelf: 'flex-start' }}
           onPress={() => setUs({ cash: round2((sheet?.fuelAmount ?? 0) - us.online - us.pos - (sheet?.credit ?? 0)) })}
-        />
+        />}
         <Divider />
         <Row label="Total received" value={`${L.cur} ${num(sheet?.received ?? 0)}`} bold />
         <Row label="Sale" value={`${L.cur} ${num(sheet?.fuelAmount ?? 0)}`} />
@@ -183,11 +212,12 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
           </Muted>
         ) : null}
       </Card>
+      </View>
 
       <Card
         title={`Credit (${credits.length})`}
         right={
-          <HStack>
+          saved ? undefined : <HStack>
             <Btn
               title={showPay ? 'Close' : 'Receive'}
               small
@@ -209,12 +239,12 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
           </HStack>
         }
       >
-        {showCredit ? (
+        {showCredit && !saved ? (
           <View style={{ backgroundColor: '#F7FAFD', padding: 8, borderRadius: 8, marginBottom: 8 }}>
             <CreditForm day={day} set={set} unitId={unitId} />
           </View>
         ) : null}
-        {showPay ? (
+        {showPay && !saved ? (
           <View style={{ backgroundColor: '#F2FAF5', padding: 8, borderRadius: 8, marginBottom: 8 }}>
             <Text style={{ fontWeight: '700', color: C.text }}>Payment from credit customer</Text>
             <ReceivePayment date={day.date} unitId={unitId} onDone={() => setShowPay(false)} />
@@ -245,7 +275,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
                   updateDay(day.date, (d) => ({ ...d, creditSales: d.creditSales.map((x) => (x.id === c.id ? { ...x, sms: status } : x)) })),
                 )
               }
-              onDelete={() => set((d) => ({ ...d, creditSales: d.creditSales.filter((x) => x.id !== c.id) }))}
+              onDelete={saved ? undefined : () => set((d) => ({ ...d, creditSales: d.creditSales.filter((x) => x.id !== c.id) }))}
             />
           );
         })}
@@ -266,7 +296,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
                 ]
                   .filter(Boolean)
                   .join(' · ')}
-                onDelete={() => set((d) => ({ ...d, creditReceipts: d.creditReceipts.filter((x) => x.id !== r.id) }))}
+                onDelete={saved ? undefined : () => set((d) => ({ ...d, creditReceipts: d.creditReceipts.filter((x) => x.id !== r.id) }))}
               />
             ))}
             <Muted style={{ marginTop: 4 }}>Payments are customer recoveries, kept out of this dispenser's sale cash (shown in Station → Credit).</Muted>
@@ -276,7 +306,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
 
       <Card
         title="Cash → bank"
-        right={<Btn title={showDeposit ? 'Close' : 'Deposit'} small kind="secondary" onPress={() => setShowDeposit(!showDeposit)} />}
+        right={saved ? undefined : <Btn title={showDeposit ? 'Close' : 'Deposit'} small kind="secondary" onPress={() => setShowDeposit(!showDeposit)} />}
       >
         <Row label="Pending from earlier" value={num(cash?.opening ?? 0)} small />
         <Row label="+ Cash today" value={num(cash?.collected ?? 0)} small />
@@ -287,7 +317,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
               <View style={{ flex: 1 }}>
                 <Row small label={`− Deposited in ${L.bankName(d.bankId)}${d.cross ? ' ⇄ cross' : ''}`} value={num(d.amount)} color={d.cross ? C.accent : undefined} />
               </View>
-              {today ? (
+              {today && !saved ? (
                 <Pressable
                   hitSlop={10}
                   onPress={() => confirm(`Delete this deposit of ${num(d.amount)}?`, () => set((x) => ({ ...x, bankTxns: x.bankTxns.filter((t) => t.id !== d.txnId) })))}
@@ -299,7 +329,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
           );
         })}
         <Row label="Still to deposit" value={num(cash?.closing ?? 0)} color={(cash?.closing ?? 0) > 0.004 ? C.red : C.green} bold />
-        {showDeposit ? (
+        {showDeposit && !saved ? (
           <View style={{ backgroundColor: '#F7FAFD', padding: 8, borderRadius: 8, marginTop: 8 }}>
             <BankTxnForm
               date={day.date}
@@ -312,6 +342,7 @@ export function DispenserDay({ unitId, day, sum, set }: SectionProps & { unitId:
           </View>
         ) : null}
       </Card>
+      {saveBar}
     </>
   );
 }

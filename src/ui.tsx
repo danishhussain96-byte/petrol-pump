@@ -441,6 +441,14 @@ export function Field({
   );
 }
 
+/**
+ * Keeps an icon and its word together. Some Android phones measure emoji a little too
+ * narrow, so "📊 Summary" wrapped onto a hidden second line and only the icon showed.
+ */
+function keepIconWithWord(t: string): string {
+  return t.replace(/^([^\p{L}\p{N}(]+?) /u, '$1\u00A0');
+}
+
 export function Btn({
   title,
   onPress,
@@ -469,7 +477,9 @@ export function Btn({
         style,
       ]}
     >
-      <Text style={[s.btnText, { color: fg }, small && { fontSize: 13 }]}>{title}</Text>
+      <Text style={[s.btnText, { color: fg }, small && { fontSize: 13 }]} textBreakStrategy="simple">
+        {keepIconWithWord(title)}
+      </Text>
     </Pressable>
   );
 }
@@ -481,7 +491,9 @@ export function HStack({ children, style, gap = 8 }: { children: React.ReactNode
 export function Chip({ title, active, onPress }: { title: string; active?: boolean; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={[s.chip, active && { backgroundColor: C.primary }]}>
-      <Text style={[s.chipText, active && { color: '#fff' }]}>{title}</Text>
+      <Text style={[s.chipText, active && { color: '#fff' }]} numberOfLines={1} textBreakStrategy="simple">
+        {keepIconWithWord(title)}
+      </Text>
     </Pressable>
   );
 }

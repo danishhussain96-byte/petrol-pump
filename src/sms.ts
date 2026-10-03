@@ -15,6 +15,14 @@ export async function sendSms(phone: string, message: string): Promise<void> {
   }
 }
 
+/** Opens the SMS app with several recipients and the message filled in. */
+export async function sendSmsMany(phones: string[], message: string): Promise<void> {
+  const list = phones.map((p) => p.trim()).filter(Boolean);
+  if (!list.length) return;
+  if (await SMS.isAvailableAsync()) await SMS.sendSMSAsync(list, message);
+  else await Linking.openURL(`sms:${list.map(encodeURIComponent).join(',')}?body=${encodeURIComponent(message)}`);
+}
+
 /** Opens WhatsApp chat with the message. Numbers without a country code are left as typed. */
 export async function sendWhatsApp(phone: string, message: string): Promise<void> {
   const digits = phone.replace(/[^\d]/g, '');

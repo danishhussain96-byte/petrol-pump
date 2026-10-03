@@ -8,6 +8,7 @@ import type { DayRecord, NozzleReading, SalesmanSettlement } from '../types';
 import { BankTxnForm, txnSign, txnTitle, type TxnPrefill } from './BankTxnForm';
 import { CreditForm } from './CreditForm';
 import { DaySummarySms } from './DaySummarySms';
+import { PartnerSms } from './PartnerSms';
 import { DispenserDay, OpeningNote } from './DispenserDay';
 import { ReceivePayment, notifyChequeStatus } from './ReceivePayment';
 import {
@@ -117,7 +118,13 @@ export function DayEntry({ date, setDate }: { date: string; setDate: (d: string)
         items={[
           ...unitTabs.map((u) => {
             const sheet = sum.unitSales.find((x) => x.unitId === u.id);
-            const flag = sheet && sheet.fuelAmount > 0 && Math.abs(sheet.diff) >= 1 ? ' ⚠' : sheet && sheet.fuelAmount > 0 ? ' ✓' : '';
+            const flag = day.unitSaved?.[u.id]
+              ? ' 🔒'
+              : sheet && sheet.fuelAmount > 0 && Math.abs(sheet.diff) >= 1
+                ? ' ⚠'
+                : sheet && sheet.fuelAmount > 0
+                  ? ' ✓'
+                  : '';
             return { key: u.id, label: `⛽ ${u.name}${flag}` };
           }),
           { key: STATION, label: '🏪 Station' },
@@ -600,6 +607,9 @@ function Credit({ day, set }: SectionProps) {
           />
         ))}
       </Card>
+      <Card title="📤 Day's credit report to partners">
+        <PartnerSms day={day} />
+      </Card>
       <Card title="Day summary SMS (all vehicles in one SMS)">
         <DaySummarySms day={day} />
       </Card>
@@ -805,8 +815,16 @@ function Cash({ day, sum, set }: SectionProps) {
   const c = sum.cash;
   return (
     <>
-      <Card title="Cash calculation">
-        <Row label="Opening cash in hand" value={num(c.opening)} />
+      <Card title="Cash received today">
+        <Row label="From salesmen" value={num(c.salesCash)} />
+        <Row label="From credit customers (cash)" value={num(c.creditRecovery)} />
+        <Row label="Other income" value={num(c.otherIncome)} />
+        <Divider />
+        <Row label="Total cash received today" value={`${L.cur} ${num(c.receivedToday)}`} bold />
+        <Muted style={{ marginTop: 4 }}>Only this day's cash, nothing from earlier days.</Muted>
+      </Card>
+      <Card title="Cash in hand (running, incl. earlier days)">
+        <Row label="Cash not banked from earlier days" value={num(c.opening)} />
         <Row label="+ Cash from salesmen" value={num(c.salesCash)} />
         <Row label="+ Credit recovery (cash)" value={num(c.creditRecovery)} />
         <Row label="+ Other income" value={num(c.otherIncome)} />
@@ -864,8 +882,11 @@ function Summary({ day, sum, set }: SectionProps) {
         <Stat label="Total sales" value={`${L.cur} ${num(sum.totalSales)}`} />
         <Stat label="Fuel sold" value={`${num(sum.fuelLitres)} L`} />
         <Stat label="Short / excess" value={num(sum.shortExcess)} color={diffColor(sum.shortExcess)} />
-        <Stat label="Cash in hand" value={`${L.cur} ${num(sum.cash.closing)}`} />
+        <Stat label="Cash received today" value={`${L.cur} ${num(sum.cash.receivedToday)}`} />
       </View>
+      <Card title="📤 End-of-day report to partners">
+        <PartnerSms day={day} />
+      </Card>
       <Card title="Sales breakdown">
         <Row label="Fuel" value={num(sum.fuelAmount)} />
         <Row label="Lube / items" value={num(sum.itemAmount)} />
@@ -880,7 +901,7 @@ function Summary({ day, sum, set }: SectionProps) {
         <Row label="Gross margin (sale − average cost)" value={num(sum.grossMargin)} />
         <Row label="Stock gain / loss (at cost)" value={num(sum.stockGainLossValue)} />
         <Row label="Other income" value={num(sum.otherIncome)} />
-        <Row label="Expenses" value={`−${num(sum.expenses)}`} />
+        <Row label="Expenses" value={sum.expenses ? `−${num(sum.expenses)}` : "0"} />
         <Row label="Net profit" value={`${L.cur} ${num(sum.netProfit)}`} bold color={sum.netProfit < 0 ? C.red : C.green} />
         {sum.costUnknown.length ? (
           <Muted style={{ marginTop: 4 }}>

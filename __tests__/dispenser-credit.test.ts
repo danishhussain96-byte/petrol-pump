@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bankStatement, computeLedger, emptyDay, creditStatus, customerLedger, initialCarry } from '../src/calc';
-import { creditMessage, daySummaryMessage, paymentMessage } from '../src/creditMessage';
+import { creditMessage, daySummaryMessage, partnerDayMessage, paymentMessage } from '../src/creditMessage';
 import { defaultData, newDay, normalize } from '../src/defaults';
 import type { AppData } from '../src/types';
 
@@ -201,4 +201,21 @@ test("a day's opening meter follows the earlier day's closing unless typed by ha
   assert.equal(l.summaries['2026-10-02'].nozzles[0].litres, 50);
   // First day ever: no earlier closing, so the entered opening is used.
   assert.equal(l.summaries['2026-10-01'].nozzles[0].opening, 1000);
+});
+
+test('end-of-day partner SMS lists credit today and every pending balance', () => {
+  const data = notebookDay();
+  data.customers.push({ id: 'c2', name: 'Old Customer', phone: '', vehicleNo: '', openingBalance: 5000, creditLimit: 0, active: true });
+  const day = data.days['2026-10-01'];
+  day.creditSales.push({ ...day.creditSales[0], id: 'cs2', vehicleNo: 'mh12cd5678', amount: 1000 });
+  day.creditReceipts = [{ id: 'r1', customerId: 'c2', amount: 2000, mode: 'cash', note: '' }];
+  const msg = partnerDayMessage(data, '2026-10-01');
+  const lines = msg.split('\n');
+  assert.equal(lines[0], 'Test Station - credit report Thu, 1 Oct 2026');
+  assert.ok(lines.includes('1. Sharma Transport (MH12AB1234, MH12CD5678) - Rs 1,270.80'));
+  assert.ok(lines.includes('Total credit today: Rs 1,270.80'));
+  assert.ok(lines.includes('Old Customer - Rs 2,000'));
+  assert.ok(lines.includes('1. Old Customer - Rs 3,000'));
+  assert.ok(lines.includes('2. Sharma Transport - Rs 1,270.80'));
+  assert.ok(lines.includes('Total pending: Rs 4,270.80'));
 });
